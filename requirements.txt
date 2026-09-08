@@ -1,0 +1,33 @@
+# SIR-CDR research environment
+# Recommended environment: Python 3.10, NVIDIA driver compatible with CUDA 12.4
+# Example:
+#   conda create -n sir-cdr python=3.10 -y
+#   conda activate sir-cdr
+#   python -m pip install --upgrade pip
+#   pip install -r requirements.txt
+
+# Use the CUDA 12.4 PyTorch wheel on the RTX 4090 server.
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+# Core numerical and deep-learning stack (aligned with GenCDR).
+torch==2.6.0
+numpy==1.24.3
+pandas==1.5.3
+scikit-learn==1.7.1
+
+# Generative recommendation, semantic encoding, and efficient tuning.
+transformers==4.53.2
+sentence-transformers==3.3.1
+datasets==4.0.0
+accelerate==1.9.0
+peft==0.16.0
+tiktoken==0.9.0
+
+# Experiment configuration and utilities.
+PyYAML==6.0.2
+requests==2.32.4
+tqdm==4.67.1
+
+# Reserved embedding API clients. DeepSeek and Qwen both support
+# OpenAI-compatible endpoints; credentials must be supplied by environment.
+openai==1.97.1
