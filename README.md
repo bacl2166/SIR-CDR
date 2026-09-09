@@ -10,6 +10,20 @@ The first real-data targets are:
 ## Documentation
 
 - [Amazon Sports-to-Clothing preprocessing guide](docs/amazon_sports_clothing_preprocessing.md)
+- [Amazon preprocessing implementation plan](docs/superpowers/plans/2026-09-09-amazon-sports-clothing-preprocessing.md)
+
+## Data Preparation Status
+
+The Amazon Sports-to-Clothing data contract, leakage controls, artifact schemas, server commands, and acceptance checks are documented. The executable preprocessing command is still under implementation; do not run `experiments/prepare_amazon.py` until that file is present in the checked-out commit.
+
+The currently executable checks are:
+
+```bash
+python -m unittest discover -s tests -v
+python experiments/run_synthetic.py
+```
+
+Raw Amazon Reviews 2014 files and all generated outputs belong under ignored `data/` and `artifacts/` directories. Product ASIN values are reserved for indexing, supervision, and reverse lookup; they are not model input features.
 
 ## Framework Modules
 
