@@ -29,6 +29,7 @@ artifacts/
 checkpoints/
 outputs/
 logs/
+*.log
 runs/
 wandb/
 *.pt
