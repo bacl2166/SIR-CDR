@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cdr_framework.experiment_config import AmazonPreprocessingConfig
+from cdr_framework.experiment_config import AmazonPreprocessingConfig, QwenEmbeddingConfig
 
 
 class AmazonPreprocessingConfigTests(unittest.TestCase):
@@ -45,6 +45,24 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
     def test_rejects_non_positive_text_limit(self):
         with self.assertRaises(ValueError):
             AmazonPreprocessingConfig(max_text_chars=0)
+
+    def test_loads_qwen_embedding_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                "embedding:\n"
+                "  provider: qwen\n"
+                "  model: text-embedding-v4\n"
+                "  dimension: 768\n"
+                "  batch_size: 10\n",
+                encoding="utf-8",
+            )
+
+            config = QwenEmbeddingConfig.from_yaml(path)
+
+            self.assertEqual(config.model, "text-embedding-v4")
+            self.assertEqual(config.dimension, 768)
+            self.assertEqual(config.batch_size, 10)
 
 
 if __name__ == "__main__":

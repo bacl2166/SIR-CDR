@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Sequence
+import os
+from typing import Any
 
 import torch
 
@@ -27,9 +29,55 @@ class ReservedAPITextEmbeddingProvider(BaseTextEmbeddingProvider):
         )
 
 
-class QwenTextEmbeddingProvider(ReservedAPITextEmbeddingProvider):
-    def __init__(self, api_key_env: str = "DASHSCOPE_API_KEY", model: str = "text-embedding-v4", dim: int = 768):
-        super().__init__(provider_name="Qwen", api_key_env=api_key_env, model=model, dim=dim)
+class QwenTextEmbeddingProvider(BaseTextEmbeddingProvider):
+    def __init__(
+        self,
+        api_key_env: str = "DASHSCOPE_API_KEY",
+        base_url_env: str = "DASHSCOPE_BASE_URL",
+        model: str = "text-embedding-v4",
+        dim: int = 768,
+        client: Any | None = None,
+    ):
+        self.api_key_env = api_key_env
+        self.base_url_env = base_url_env
+        self.model = model
+        self.dim = dim
+        self._client = client
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        api_key = os.environ.get(self.api_key_env)
+        base_url = os.environ.get(self.base_url_env)
+        missing = [name for name, value in ((self.api_key_env, api_key), (self.base_url_env, base_url)) if not value]
+        if missing:
+            raise RuntimeError(
+                "Missing required Qwen embedding environment variable(s): "
+                + ", ".join(missing)
+            )
+        from openai import OpenAI
+
+        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        return self._client
+
+    def encode_text(self, records: Sequence[str | ItemMetadataRecord]) -> torch.Tensor:
+        texts = [_embedding_text(record) for record in records]
+        if not texts:
+            return torch.empty((0, self.dim), dtype=torch.float32)
+        response = self._get_client().embeddings.create(
+            model=self.model,
+            input=texts,
+            dimensions=self.dim,
+            encoding_format="float",
+        )
+        ordered = sorted(response.data, key=lambda entry: getattr(entry, "index", 0))
+        vectors = torch.tensor([entry.embedding for entry in ordered], dtype=torch.float32)
+        if vectors.shape != (len(texts), self.dim):
+            raise RuntimeError(
+                f"Qwen returned embedding shape {tuple(vectors.shape)}, "
+                f"expected {(len(texts), self.dim)}."
+            )
+        return vectors
 
 
 class DeepSeekTextEmbeddingProvider(ReservedAPITextEmbeddingProvider):
@@ -50,3 +98,10 @@ def build_text_embedding_provider(config: EmbeddingConfig) -> BaseTextEmbeddingP
         if normalized == "local":
             return DeterministicHashTextEmbeddingProvider(dim=config.text_dim)
     raise ValueError(f"No supported text embedding provider in order: {config.provider_order!r}")
+
+
+def _embedding_text(record: str | ItemMetadataRecord) -> str:
+    if isinstance(record, str):
+        return record
+    fields = [record.title, record.brand_or_creator, *record.category, record.description]
+    return " ".join(str(value).strip() for value in fields if value).strip()
