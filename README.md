@@ -111,6 +111,27 @@ python experiments/train_tokenizer.py \
   --force
 ```
 
+## Formal Recommendation Training
+
+After tokenizer schema v2 passes its quality gate, train SIR-CDR with a full-target softmax objective:
+
+```bash
+python experiments/train_recommender.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda
+```
+
+The formal model consumes fixed text-derived item latents and Semantic IDs. Numeric item IDs are used only to retrieve these fixed features, identify labels, and filter seen target items. Training does not use randomly sampled negatives. Validation and test ranking score the complete target catalog, then apply Semantic ID generation reranking to the strongest full-catalog candidates.
+
+Evaluate the best validation checkpoint once on the held-out test set:
+
+```bash
+python experiments/evaluate_recommender.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda \
+  --split test
+```
+
 ## Verify
 
 ```bash
