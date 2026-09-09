@@ -7,6 +7,10 @@ The first real-data targets are:
 - Amazon: Sports-Clothing and Phones-Electronics in both transfer directions.
 - Douban: Books-Movies in both transfer directions.
 
+## Documentation
+
+- [Amazon Sports-to-Clothing preprocessing guide](docs/amazon_sports_clothing_preprocessing.md)
+
 ## Framework Modules
 
 - `cdr_framework/config.py`: dataset, embedding, model, and training configuration dataclasses.
