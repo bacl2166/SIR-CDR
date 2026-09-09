@@ -19,6 +19,10 @@ env/
 .DS_Store
 Thumbs.db
 
+# Local isolated development and subagent coordination
+.worktrees/
+.superpowers/
+
 # Datasets, generated embeddings, experiment outputs, and checkpoints
 data/
 artifacts/
