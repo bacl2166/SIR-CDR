@@ -51,7 +51,7 @@ def run(config: TokenizerTrainingConfig, *, device: str | None, force: bool) -> 
             f"Epoch {int(metrics['epoch']):03d}/{config.max_epochs}: "
             f"total={metrics['total']:.6f} "
             f"reconstruction={metrics['reconstruction']:.6f} "
-            f"vq={metrics['vq']:.6f} "
+            f"domain={metrics['domain']:.6f} "
             f"gate={metrics['gate_balance']:.6f}",
             flush=True,
         )

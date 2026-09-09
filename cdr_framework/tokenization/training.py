@@ -13,12 +13,12 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from cdr_framework.codebook import SemanticCodebook
 from cdr_framework.experiment_config import TokenizerTrainingConfig
+from cdr_framework.tokenization.residual_kmeans import fit_residual_kmeans
 from cdr_framework.tokenization.tokenizer import DomainAdaptiveSemanticTokenizer
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SOURCE_DOMAIN = "Sports_and_Outdoors"
 TARGET_DOMAIN = "Clothing_Shoes_and_Jewelry"
 
@@ -43,35 +43,35 @@ class TokenizerRunResult:
 
 
 class TrainableSemanticTokenizer(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, codebook_size: int, seed: int):
+    def __init__(self, input_dim: int, hidden_dim: int):
         super().__init__()
         self.encoder = DomainAdaptiveSemanticTokenizer(input_dim, hidden_dim, num_domains=2)
-        self.codebook = SemanticCodebook.random_init(codebook_size, hidden_dim, seed)
         self.decoder = nn.Sequential(nn.Linear(hidden_dim, input_dim), nn.LayerNorm(input_dim))
+        self.domain_classifier = nn.Linear(hidden_dim, 2)
 
     def forward(
         self,
         vectors: torch.Tensor,
         domains: torch.Tensor,
-        token_length: int,
-        commitment_weight: float,
+        domain_loss_weight: float,
         gate_balance_weight: float,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         encoded = self.encoder(vectors, domains)
-        tokens, quantized, vq_loss = self.codebook.quantize(encoded.final, token_length)
-        straight_through = encoded.final + (quantized - encoded.final).detach()
-        reconstruction = self.decoder(straight_through)
+        reconstruction = self.decoder(encoded.final)
         reconstruction_loss = F.mse_loss(reconstruction, vectors.float())
+        domain_loss = F.cross_entropy(
+            self.domain_classifier(encoded.domain_specific), domains.long()
+        )
         gate_balance = (encoded.gate.mean() - 0.5).pow(2)
         total = (
             reconstruction_loss
-            + commitment_weight * vq_loss
+            + domain_loss_weight * domain_loss
             + gate_balance_weight * gate_balance
         )
-        return tokens, {
+        return encoded.final, {
             "total": total,
             "reconstruction": reconstruction_loss,
-            "vq": vq_loss,
+            "domain": domain_loss,
             "gate_balance": gate_balance,
         }
 
@@ -179,6 +179,10 @@ def train_semantic_tokenizer(
     manifest_path = output / "manifest.json"
     if manifest_path.exists() and not force:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema_version") != SCHEMA_VERSION:
+            raise RuntimeError(
+                "Tokenizer output uses an obsolete quantizer schema; rerun with --force."
+            )
         return TokenizerRunResult(
             output,
             output / "semantic_ids.pt",
@@ -199,9 +203,7 @@ def train_semantic_tokenizer(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(config.seed)
     target_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    model = TrainableSemanticTokenizer(
-        config.input_dim, config.hidden_dim, config.codebook_size, config.seed
-    ).to(target_device)
+    model = TrainableSemanticTokenizer(config.input_dim, config.hidden_dim).to(target_device)
     if dataset.vectors.shape[1] != config.input_dim:
         raise ValueError(
             f"Embedding dimension {dataset.vectors.shape[1]} does not match "
@@ -215,6 +217,8 @@ def train_semantic_tokenizer(
     state_path = output / "training_state.pt"
     if state_path.exists():
         state = torch.load(state_path, map_location=target_device, weights_only=True)
+        if state.get("schema_version") != SCHEMA_VERSION:
+            raise RuntimeError("Tokenizer checkpoint schema mismatch; use --force to restart.")
         if state.get("config") != _config_payload(config):
             raise RuntimeError("Tokenizer resume configuration mismatch; use --force to restart.")
         model.load_state_dict(state["model_state"])
@@ -230,7 +234,12 @@ def train_semantic_tokenizer(
             generator=torch.Generator().manual_seed(config.seed + epoch),
         )
         model.train()
-        totals = {"total": 0.0, "reconstruction": 0.0, "vq": 0.0, "gate_balance": 0.0}
+        totals = {
+            "total": 0.0,
+            "reconstruction": 0.0,
+            "domain": 0.0,
+            "gate_balance": 0.0,
+        }
         batches = 0
         for vectors, domains in loader:
             vectors = vectors.to(target_device, non_blocking=True)
@@ -239,8 +248,7 @@ def train_semantic_tokenizer(
             _, losses = model(
                 vectors,
                 domains,
-                config.token_length,
-                config.commitment_weight,
+                config.domain_loss_weight,
                 config.gate_balance_weight,
             )
             losses["total"].backward()
@@ -275,15 +283,26 @@ def train_semantic_tokenizer(
             vectors = vectors.to(target_device)
             domains = domains.to(target_device)
             encoded = model.encoder(vectors, domains)
-            tokens, _, _ = model.codebook.quantize(encoded.final, config.token_length)
-            token_rows[item_ids] = tokens.cpu()
             latent_rows[item_ids] = encoded.final.cpu().float()
 
-    item_tokens = token_rows[dataset.item_ids]
+    item_latents = latent_rows[dataset.item_ids].to(target_device)
+    item_tokens_device, quantized_latents, codebooks = fit_residual_kmeans(
+        item_latents,
+        codebook_size=config.codebook_size,
+        token_length=config.token_length,
+        iterations=config.kmeans_iterations,
+        seed=config.seed,
+    )
+    item_tokens = item_tokens_device.cpu()
+    token_rows[dataset.item_ids] = item_tokens
     unique_sequences = len({tuple(row) for row in item_tokens.tolist()})
     collision_rate = 1.0 - unique_sequences / len(dataset.item_ids)
-    used_codes = torch.unique(item_tokens).numel()
-    codebook_utilization = used_codes / config.codebook_size
+    per_level_utilization = [
+        torch.unique(item_tokens[:, level]).numel() / config.codebook_size
+        for level in range(config.token_length)
+    ]
+    codebook_utilization = sum(per_level_utilization) / len(per_level_utilization)
+    quantization_mse = float(F.mse_loss(quantized_latents, item_latents).cpu())
     _save_atomic(output / "semantic_ids.pt", token_rows)
     _save_atomic(output / "item_latents.pt", latent_rows)
     _save_atomic(
@@ -291,6 +310,7 @@ def train_semantic_tokenizer(
         {
             "schema_version": SCHEMA_VERSION,
             "model_state": model.state_dict(),
+            "codebooks": codebooks.cpu(),
             "config": _config_payload(config),
         },
     )
@@ -308,6 +328,23 @@ def train_semantic_tokenizer(
                 + "\n"
             )
     temporary_item_tokens.replace(item_tokens_path)
+    quality_report = {
+        "collision_rate": collision_rate,
+        "max_collision_rate": config.max_collision_rate,
+        "per_level_codebook_utilization": per_level_utilization,
+        "min_level_utilization": config.min_level_utilization,
+        "quantization_mse": quantization_mse,
+        "passed": collision_rate <= config.max_collision_rate
+        and min(per_level_utilization) >= config.min_level_utilization,
+    }
+    _write_json(output / "quality_report.json", quality_report)
+    if not quality_report["passed"]:
+        raise RuntimeError(
+            "Semantic ID quality gate failed: "
+            f"collision_rate={collision_rate:.6f}, "
+            f"per_level_utilization={per_level_utilization}. "
+            "Inspect quality_report.json before retrying."
+        )
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "item_count": len(dataset.item_ids),
@@ -319,6 +356,8 @@ def train_semantic_tokenizer(
         "collision_rate": collision_rate,
         "unique_semantic_ids": unique_sequences,
         "codebook_utilization": codebook_utilization,
+        "per_level_codebook_utilization": per_level_utilization,
+        "quantization_mse": quantization_mse,
         "semantic_ids_shape": list(token_rows.shape),
         "embeddings_sha256": _sha256(config.embeddings_path),
         "item_texts_sha256": _sha256(config.item_texts_path),

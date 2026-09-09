@@ -382,7 +382,27 @@ nohup python -u experiments/train_tokenizer.py \
 echo $! | tee logs/train_tokenizer.pid
 ```
 
-训练默认使用 768 维输入、128 维隐空间、512 个码字和长度为 4 的 Semantic ID。每轮保存 `training_state.pt`，中断后重新运行同一命令即可继续。输出包括 `tokenizer.pt`、`semantic_ids.pt`、`item_semantic_ids.jsonl`、`item_latents.pt`、`training_history.json` 和 `manifest.json`。该阶段不读取千问 API Key。
+训练默认使用 768 维输入、128 维隐空间、每层 512 个码字和长度为 4 的 Semantic ID。流程先训练领域自适应连续编码器，再对完整物品隐向量逐层拟合相互独立的残差 K-means 码本，避免同一码本重复量化造成离散表示坍缩。每轮保存 `training_state.pt`，中断后重新运行同一命令即可继续。
+
+输出包括 `tokenizer.pt`、`semantic_ids.pt`、`item_semantic_ids.jsonl`、`item_latents.pt`、`training_history.json`、`quality_report.json` 和 `manifest.json`。只有总体碰撞率不超过 `max_collision_rate` 且每层码本利用率不低于 `min_level_utilization` 时才会写入 `manifest.json`。该阶段不读取千问 API Key。
+
+旧版共享码本输出的 `schema_version` 为 1，不能用于后续训练。更新代码后首次运行必须使用 `--force`：
+
+```bash
+nohup python -u experiments/train_tokenizer.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda \
+  --force \
+  > logs/train_tokenizer_v2.log 2>&1 &
+echo $! | tee logs/train_tokenizer_v2.pid
+```
+
+完成后验收：
+
+```bash
+python -m json.tool artifacts/tokenizer/sports_to_clothing/quality_report.json
+python -m json.tool artifacts/tokenizer/sports_to_clothing/manifest.json
+```
 
 ### 13.5 后续流水线
 
