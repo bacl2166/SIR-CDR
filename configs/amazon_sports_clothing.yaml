@@ -1,0 +1,8 @@
+dataset:
+  source_domain: Sports_and_Outdoors
+  target_domain: Clothing_Shoes_and_Jewelry
+  raw_dir: data/raw/amazon2014
+  processed_dir: data/processed/sports_to_clothing
+  min_interactions_per_domain: 5
+  max_text_chars: 12000
+  seed: 42

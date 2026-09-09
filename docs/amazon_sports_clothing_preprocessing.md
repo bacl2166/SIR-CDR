@@ -2,9 +2,9 @@
 
 本文档定义 SIR-CDR 首轮正式实验 `Amazon Sports and Outdoors -> Clothing, Shoes and Jewelry` 的数据下载、清洗、切分与文本向量化协议。
 
-> 当前状态：原始数据可按本文档手动下载和校验；正式预处理入口
-> `experiments/prepare_amazon.py` 及其配套模块仍需按实现计划完成。文中标记为
-> “实现后执行”的命令，在对应代码合入 GitHub 前不可运行。
+> 当前状态：正式预处理入口 `experiments/prepare_amazon.py`、配置加载、原始数据
+> I/O、共享用户过滤、无泄漏切分和产物写入均已实现。Embedding、Semantic ID、
+> 推荐模型训练及全目标域评测仍属于后续阶段。
 
 ## 1. 实验范围
 
@@ -312,7 +312,7 @@ python -m unittest discover -s tests -v
 python experiments/run_synthetic.py
 ```
 
-### 13.2 预处理实现后执行
+### 13.2 正式预处理命令
 
 首次运行由程序下载缺失的原始文件并生成产物：
 
@@ -413,7 +413,7 @@ wc -l data/processed/sports_to_clothing/*.jsonl
 
 ### 16.1 `prepare_amazon.py` 不存在
 
-说明服务器代码仍停留在只有设计文档的提交。先检查并更新仓库：
+说明服务器代码尚未更新到预处理实现提交。先检查并更新仓库：
 
 ```bash
 git status --short --branch
@@ -422,7 +422,7 @@ git pull origin main
 test -f experiments/prepare_amazon.py
 ```
 
-最后一条仍失败时，不要自行创建空脚本，等待预处理实现提交合入。
+最后一条仍失败时，不要自行创建空脚本，应确认 GitHub `main` 已包含预处理实现版本。
 
 ### 16.2 gzip 下载不完整
 
