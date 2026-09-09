@@ -1,5 +1,6 @@
 from cdr_framework.tokenization.codebook import BeamResult, RecommendationHit, SemanticCodebook, beam_search
 from cdr_framework.tokenization.item_index import ItemTokenIndex
+from cdr_framework.tokenization.residual_kmeans import fit_residual_kmeans, quantize_residuals
 from cdr_framework.tokenization.tokenizer import DomainAdaptiveSemanticTokenizer, TokenizerOutput
 from cdr_framework.tokenization.training import (
     TokenizerDataset,
@@ -20,6 +21,8 @@ __all__ = [
     "TokenizerRunResult",
     "TrainableSemanticTokenizer",
     "beam_search",
+    "fit_residual_kmeans",
     "load_tokenizer_dataset",
+    "quantize_residuals",
     "train_semantic_tokenizer",
 ]

@@ -82,8 +82,11 @@ class TokenizerTrainingConfig:
     learning_rate: float = 1e-3
     weight_decay: float = 1e-5
     max_epochs: int = 100
-    commitment_weight: float = 1.0
+    domain_loss_weight: float = 0.1
     gate_balance_weight: float = 0.01
+    kmeans_iterations: int = 20
+    max_collision_rate: float = 0.10
+    min_level_utilization: float = 0.10
     seed: int = 42
 
     def __post_init__(self) -> None:
@@ -96,13 +99,18 @@ class TokenizerTrainingConfig:
             "token_length",
             "batch_size",
             "max_epochs",
+            "kmeans_iterations",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"Tokenizer {name} must be positive.")
         if self.learning_rate <= 0 or self.weight_decay < 0:
             raise ValueError("Tokenizer optimizer settings are invalid.")
-        if self.commitment_weight < 0 or self.gate_balance_weight < 0:
+        if self.domain_loss_weight < 0 or self.gate_balance_weight < 0:
             raise ValueError("Tokenizer loss weights must be non-negative.")
+        if not 0 <= self.max_collision_rate < 1:
+            raise ValueError("Tokenizer max_collision_rate must be in [0, 1).")
+        if not 0 < self.min_level_utilization <= 1:
+            raise ValueError("Tokenizer min_level_utilization must be in (0, 1].")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "TokenizerTrainingConfig":

@@ -100,7 +100,16 @@ python experiments/train_tokenizer.py \
   --device cuda
 ```
 
-This stage does not call any external API. It exports fixed-length Semantic IDs, the tokenizer checkpoint, item latent vectors, training history, and collision/utilization statistics under `artifacts/tokenizer/sports_to_clothing/`.
+The tokenizer first learns domain-adaptive continuous item representations and then fits one data-driven residual K-means codebook per Semantic ID position. A run is marked complete only when its collision rate and every level's codebook utilization pass the configured quality gates. This stage does not call any external API. It exports fixed-length Semantic IDs, independent residual codebooks, item latent vectors, training history, and quality statistics under `artifacts/tokenizer/sports_to_clothing/`.
+
+Outputs created by the obsolete shared-codebook schema must be restarted once:
+
+```bash
+python experiments/train_tokenizer.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda \
+  --force
+```
 
 ## Verify
 

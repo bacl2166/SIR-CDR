@@ -64,6 +64,12 @@ class TokenizerTrainingTests(unittest.TestCase):
             self.assertTrue(torch.all(tokens[1:] >= 0))
             self.assertTrue((config.output_dir / "tokenizer.pt").is_file())
             self.assertTrue((config.output_dir / "item_latents.pt").is_file())
+            manifest = json.loads(
+                (config.output_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(len(manifest["per_level_codebook_utilization"]), 2)
+            self.assertLessEqual(manifest["collision_rate"], 0.10)
             self.assertEqual(
                 len((config.output_dir / "item_semantic_ids.jsonl").read_text().splitlines()),
                 4,
