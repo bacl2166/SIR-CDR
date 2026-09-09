@@ -69,6 +69,16 @@ class FormalTrainingTests(unittest.TestCase):
             self.assertTrue((config.output_dir / "manifest.json").is_file())
             self.assertIn("NDCG@2", result.best_validation)
 
+            from experiments.diagnose_recommender import diagnose
+            diagnostics = diagnose(config, torch.device("cpu"))
+            self.assertEqual(diagnostics["examples"], 2)
+            self.assertEqual(diagnostics["split"], "validation")
+            self.assertEqual(diagnostics["candidate_recall"], 1.0)
+            self.assertEqual(diagnostics["generation_reranked"], {
+                key: value for key, value in result.best_validation.items()
+                if key.startswith(("HR@", "NDCG@", "MRR@"))
+            })
+
             semantic_ids[1, 0] = (semantic_ids[1, 0] + 1) % 4
             torch.save(semantic_ids, tokenizer / "semantic_ids.pt")
             with self.assertRaisesRegex(RuntimeError, "artifacts changed"):

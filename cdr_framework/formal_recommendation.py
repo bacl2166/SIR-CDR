@@ -297,6 +297,8 @@ class SIRCDRRecommender(nn.Module):
 
         retrieval_scores = best_scores
         item_ids = best_items
+        if generation_weight == 0.0 and retrieval_weight > 0.0:
+            return item_ids[:, :top_k]
         tokens = self.semantic_ids[item_ids]
         batch_size = len(query)
         expanded_prefix = prefix[:, None].expand(-1, rerank_count, -1, -1).reshape(
