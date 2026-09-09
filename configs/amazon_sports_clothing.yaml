@@ -6,3 +6,15 @@ dataset:
   min_interactions_per_domain: 5
   max_text_chars: 12000
   seed: 42
+
+embedding:
+  provider: qwen
+  model: text-embedding-v4
+  dimension: 768
+  batch_size: 10
+  max_retries: 5
+  retry_initial_seconds: 2.0
+  input_path: data/processed/sports_to_clothing/item_texts.jsonl
+  output_dir: artifacts/embeddings/sports_to_clothing
+  api_key_env: DASHSCOPE_API_KEY
+  base_url_env: DASHSCOPE_BASE_URL

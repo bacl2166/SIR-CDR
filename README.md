@@ -64,7 +64,7 @@ interactions + metadata
 
 External embedding calls are disabled by default. `EmbeddingConfig(enable_api_calls=False)` selects the deterministic local provider, so tests and synthetic experiments do not require network access or credentials.
 
-`QwenTextEmbeddingProvider` and `DeepSeekTextEmbeddingProvider` reserve the future API integration points. Their credentials are expected from `DASHSCOPE_API_KEY` and `DEEPSEEK_API_KEY`; secrets must not be written into configuration files. The current reserved implementations raise a clear error instead of making a network request. When the concrete SDK clients are added, they should preserve the existing `encode_text(...) -> torch.Tensor` interface and write results through `CachedEmbeddingStore` before training consumes them.
+`QwenTextEmbeddingProvider` implements the OpenAI-compatible `text-embedding-v4` call and reads credentials from `DASHSCOPE_API_KEY` and `DASHSCOPE_BASE_URL`. `DeepSeekTextEmbeddingProvider` remains a reserved fallback. Secrets must not be written into configuration files. Qwen outputs preserve the existing `encode_text(...) -> torch.Tensor` interface and the batch runner persists completed chunks before training consumes them.
 
 Provider selection is centralized:
 
@@ -78,6 +78,18 @@ provider = build_text_embedding_provider(
         provider_order=("qwen", "deepseek", "local"),
     )
 )
+```
+
+After preprocessing, verify one real Qwen request before starting the resumable full job:
+
+```bash
+source /root/autodl-tmp/sir-cdr-api.env
+python experiments/embed_items.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --smoke-test
+
+python experiments/embed_items.py \
+  --config configs/amazon_sports_clothing.yaml
 ```
 
 ## Verify

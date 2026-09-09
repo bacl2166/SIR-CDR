@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 import torch
@@ -37,12 +38,32 @@ class EmbeddingProviderTest(unittest.TestCase):
         self.assertTrue(hasattr(BaseLLMSemanticProvider, "score_cross_domain_pairs"))
         self.assertTrue(hasattr(BaseLLMSemanticProvider, "summarize_item_metadata"))
 
-    def test_api_text_providers_are_reserved_and_disabled_by_default(self):
-        qwen = QwenTextEmbeddingProvider(api_key_env="DASHSCOPE_API_KEY", model="text-embedding-v4")
+    def test_qwen_provider_calls_compatible_embedding_api(self):
+        calls = []
+
+        class Embeddings:
+            def create(self, **kwargs):
+                calls.append(kwargs)
+                return SimpleNamespace(
+                    data=[SimpleNamespace(index=0, embedding=[0.1, 0.2, 0.3])]
+                )
+
+        client = SimpleNamespace(embeddings=Embeddings())
+        qwen = QwenTextEmbeddingProvider(
+            model="text-embedding-v4", dim=3, client=client
+        )
+
+        vectors = qwen.encode_text(["hello"])
+
+        self.assertEqual(tuple(vectors.shape), (1, 3))
+        self.assertEqual(vectors.dtype, torch.float32)
+        self.assertEqual(calls[0]["model"], "text-embedding-v4")
+        self.assertEqual(calls[0]["dimensions"], 3)
+        self.assertEqual(calls[0]["encoding_format"], "float")
+
+    def test_deepseek_provider_remains_reserved(self):
         deepseek = DeepSeekTextEmbeddingProvider(api_key_env="DEEPSEEK_API_KEY", model="deepseek-embedding")
 
-        with self.assertRaisesRegex(RuntimeError, "Qwen text embedding API is reserved"):
-            qwen.encode_text(["hello"])
         with self.assertRaisesRegex(RuntimeError, "DeepSeek text embedding API is reserved"):
             deepseek.encode_text(["hello"])
 

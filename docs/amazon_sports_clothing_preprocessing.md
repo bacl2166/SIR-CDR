@@ -3,8 +3,8 @@
 本文档定义 SIR-CDR 首轮正式实验 `Amazon Sports and Outdoors -> Clothing, Shoes and Jewelry` 的数据下载、清洗、切分与文本向量化协议。
 
 > 当前状态：正式预处理入口 `experiments/prepare_amazon.py`、配置加载、原始数据
-> I/O、共享用户过滤、无泄漏切分和产物写入均已实现。Embedding、Semantic ID、
-> 推荐模型训练及全目标域评测仍属于后续阶段。
+> I/O、共享用户过滤、无泄漏切分、产物写入以及千问文本 Embedding 均已实现。
+> Semantic ID、推荐模型训练及全目标域评测仍属于后续阶段。
 
 ## 1. 实验范围
 
@@ -274,6 +274,26 @@ Embedding 阶段必须支持：
 - 对超时、限流和临时服务错误执行有限次数重试。
 - 已成功缓存的物品不能重复调用 API。
 
+上述能力由 `cdr_framework/embeddings/qwen.py` 和 `experiments/embed_items.py` 提供。先执行单条商品冒烟测试，它只调用一次 API 且不写入正式产物：
+
+```bash
+source /root/autodl-tmp/sir-cdr-api.env
+python experiments/embed_items.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --smoke-test
+```
+
+冒烟测试确认模型为 `text-embedding-v4`、维度为 `768` 后，启动完整任务：
+
+```bash
+nohup python -u experiments/embed_items.py \
+  --config configs/amazon_sports_clothing.yaml \
+  > logs/embed_items.log 2>&1 &
+echo $! | tee logs/embed_items.pid
+```
+
+每批结果保存在 `artifacts/embeddings/sports_to_clothing/chunks/`。进程中断后重新执行同一命令会复用已完成批次。只有输入文本、模型、维度或批大小发生变化时才使用 `--force` 从头生成。
+
 ## 11. 两阶段训练
 
 ```text
@@ -340,18 +360,27 @@ python experiments/prepare_amazon.py \
 
 `--skip-download` 缺少任一原始文件时必须以非零状态退出，并一次列出全部缺失路径。下载采用同目录 `.part` 临时文件并支持续传；gzip 完整性校验成功后才能原子替换正式文件。
 
-### 13.3 后续流水线
+### 13.3 Embedding 命令
+
+```bash
+python experiments/embed_items.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --smoke-test
+python experiments/embed_items.py \
+  --config configs/amazon_sports_clothing.yaml
+```
+
+### 13.4 后续流水线
 
 预处理验收通过后，后续阶段计划提供：
 
 ```bash
-python experiments/embed_items.py --config configs/amazon_sports_clothing.yaml
 python experiments/train_tokenizer.py --config configs/amazon_sports_clothing.yaml
 python experiments/train.py --config configs/amazon_sports_clothing.yaml
 python experiments/evaluate.py --config configs/amazon_sports_clothing.yaml
 ```
 
-Embedding、Semantic ID、模型训练和评测脚本仍处于待实现状态。在对应脚本提交前，不应在服务器执行这些命令。预处理阶段不需要加载 `DASHSCOPE_API_KEY`。
+Semantic ID、模型训练和评测脚本仍处于待实现状态。在对应脚本提交前，不应在服务器执行这些命令。只有 Embedding 阶段需要加载 `DASHSCOPE_API_KEY`。
 
 ## 14. 可复现性记录
 
