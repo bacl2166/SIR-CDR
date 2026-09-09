@@ -370,17 +370,30 @@ python experiments/embed_items.py \
   --config configs/amazon_sports_clothing.yaml
 ```
 
-### 13.4 后续流水线
+### 13.4 Semantic ID tokenizer
+
+Embedding 验收后启动领域自适应 tokenizer：
+
+```bash
+nohup python -u experiments/train_tokenizer.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda \
+  > logs/train_tokenizer.log 2>&1 &
+echo $! | tee logs/train_tokenizer.pid
+```
+
+训练默认使用 768 维输入、128 维隐空间、512 个码字和长度为 4 的 Semantic ID。每轮保存 `training_state.pt`，中断后重新运行同一命令即可继续。输出包括 `tokenizer.pt`、`semantic_ids.pt`、`item_semantic_ids.jsonl`、`item_latents.pt`、`training_history.json` 和 `manifest.json`。该阶段不读取千问 API Key。
+
+### 13.5 后续流水线
 
 预处理验收通过后，后续阶段计划提供：
 
 ```bash
-python experiments/train_tokenizer.py --config configs/amazon_sports_clothing.yaml
 python experiments/train.py --config configs/amazon_sports_clothing.yaml
 python experiments/evaluate.py --config configs/amazon_sports_clothing.yaml
 ```
 
-Semantic ID、模型训练和评测脚本仍处于待实现状态。在对应脚本提交前，不应在服务器执行这些命令。只有 Embedding 阶段需要加载 `DASHSCOPE_API_KEY`。
+推荐模型训练和评测脚本仍处于待实现状态。在对应脚本提交前，不应在服务器执行这些命令。只有 Embedding 阶段需要加载 `DASHSCOPE_API_KEY`。
 
 ## 14. 可复现性记录
 

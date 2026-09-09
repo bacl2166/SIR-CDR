@@ -67,3 +67,44 @@ class QwenEmbeddingConfig:
     def from_yaml(cls, path: str | Path) -> "QwenEmbeddingConfig":
         payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls(**payload.get("embedding", {}))
+
+
+@dataclass(frozen=True)
+class TokenizerTrainingConfig:
+    embeddings_path: Path = Path("artifacts/embeddings/sports_to_clothing/text_embeddings.pt")
+    item_texts_path: Path = Path("data/processed/sports_to_clothing/item_texts.jsonl")
+    output_dir: Path = Path("artifacts/tokenizer/sports_to_clothing")
+    input_dim: int = 768
+    hidden_dim: int = 128
+    codebook_size: int = 512
+    token_length: int = 4
+    batch_size: int = 256
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-5
+    max_epochs: int = 100
+    commitment_weight: float = 1.0
+    gate_balance_weight: float = 0.01
+    seed: int = 42
+
+    def __post_init__(self) -> None:
+        for name in ("embeddings_path", "item_texts_path", "output_dir"):
+            object.__setattr__(self, name, Path(getattr(self, name)))
+        for name in (
+            "input_dim",
+            "hidden_dim",
+            "codebook_size",
+            "token_length",
+            "batch_size",
+            "max_epochs",
+        ):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"Tokenizer {name} must be positive.")
+        if self.learning_rate <= 0 or self.weight_decay < 0:
+            raise ValueError("Tokenizer optimizer settings are invalid.")
+        if self.commitment_weight < 0 or self.gate_balance_weight < 0:
+            raise ValueError("Tokenizer loss weights must be non-negative.")
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "TokenizerTrainingConfig":
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        return cls(**payload.get("tokenizer", {}))

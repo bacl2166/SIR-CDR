@@ -92,6 +92,16 @@ python experiments/embed_items.py \
   --config configs/amazon_sports_clothing.yaml
 ```
 
+Train the domain-adaptive tokenizer after the embedding manifest and tensor have been verified:
+
+```bash
+python experiments/train_tokenizer.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda
+```
+
+This stage does not call any external API. It exports fixed-length Semantic IDs, the tokenizer checkpoint, item latent vectors, training history, and collision/utilization statistics under `artifacts/tokenizer/sports_to_clothing/`.
+
 ## Verify
 
 ```bash

@@ -18,3 +18,19 @@ embedding:
   output_dir: artifacts/embeddings/sports_to_clothing
   api_key_env: DASHSCOPE_API_KEY
   base_url_env: DASHSCOPE_BASE_URL
+
+tokenizer:
+  embeddings_path: artifacts/embeddings/sports_to_clothing/text_embeddings.pt
+  item_texts_path: data/processed/sports_to_clothing/item_texts.jsonl
+  output_dir: artifacts/tokenizer/sports_to_clothing
+  input_dim: 768
+  hidden_dim: 128
+  codebook_size: 512
+  token_length: 4
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  max_epochs: 100
+  commitment_weight: 1.0
+  gate_balance_weight: 0.01
+  seed: 42

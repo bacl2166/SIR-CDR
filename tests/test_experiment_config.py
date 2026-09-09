@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cdr_framework.experiment_config import AmazonPreprocessingConfig, QwenEmbeddingConfig
+from cdr_framework.experiment_config import (
+    AmazonPreprocessingConfig,
+    QwenEmbeddingConfig,
+    TokenizerTrainingConfig,
+)
 
 
 class AmazonPreprocessingConfigTests(unittest.TestCase):
@@ -63,6 +67,23 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
             self.assertEqual(config.model, "text-embedding-v4")
             self.assertEqual(config.dimension, 768)
             self.assertEqual(config.batch_size, 10)
+
+    def test_loads_tokenizer_training_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                "tokenizer:\n"
+                "  input_dim: 768\n"
+                "  hidden_dim: 128\n"
+                "  codebook_size: 512\n"
+                "  token_length: 4\n",
+                encoding="utf-8",
+            )
+            config = TokenizerTrainingConfig.from_yaml(path)
+            self.assertEqual(config.input_dim, 768)
+            self.assertEqual(config.hidden_dim, 128)
+            self.assertEqual(config.codebook_size, 512)
+            self.assertEqual(config.token_length, 4)
 
 
 if __name__ == "__main__":
