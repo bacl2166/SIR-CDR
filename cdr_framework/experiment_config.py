@@ -116,3 +116,57 @@ class TokenizerTrainingConfig:
     def from_yaml(cls, path: str | Path) -> "TokenizerTrainingConfig":
         payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         return cls(**payload.get("tokenizer", {}))
+
+
+@dataclass(frozen=True)
+class RecommendationTrainingConfig:
+    processed_dir: Path = Path("data/processed/sports_to_clothing")
+    tokenizer_dir: Path = Path("artifacts/tokenizer/sports_to_clothing")
+    output_dir: Path = Path("artifacts/recommendation/sports_to_clothing")
+    hidden_dim: int = 128
+    reasoning_steps: int = 3
+    prefix_length: int = 4
+    max_sequence_length: int = 50
+    batch_size: int = 256
+    evaluation_batch_size: int = 64
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-5
+    max_epochs: int = 100
+    evaluation_every: int = 5
+    patience: int = 5
+    retrieval_temperature: float = 0.1
+    top_ks: tuple[int, ...] = (5, 10, 20)
+    candidate_chunk_size: int = 2048
+    rerank_candidates: int = 200
+    seed: int = 42
+
+    def __post_init__(self) -> None:
+        for name in ("processed_dir", "tokenizer_dir", "output_dir"):
+            object.__setattr__(self, name, Path(getattr(self, name)))
+        object.__setattr__(self, "top_ks", tuple(int(k) for k in self.top_ks))
+        for name in (
+            "hidden_dim",
+            "reasoning_steps",
+            "prefix_length",
+            "max_sequence_length",
+            "batch_size",
+            "evaluation_batch_size",
+            "max_epochs",
+            "evaluation_every",
+            "patience",
+            "candidate_chunk_size",
+            "rerank_candidates",
+        ):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"Recommendation {name} must be positive.")
+        if self.learning_rate <= 0 or self.weight_decay < 0:
+            raise ValueError("Recommendation optimizer settings are invalid.")
+        if self.retrieval_temperature <= 0:
+            raise ValueError("retrieval_temperature must be positive.")
+        if not self.top_ks or any(k <= 0 for k in self.top_ks):
+            raise ValueError("top_ks must contain positive cutoffs.")
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "RecommendationTrainingConfig":
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        return cls(**payload.get("recommendation", {}))

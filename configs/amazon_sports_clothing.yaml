@@ -37,3 +37,24 @@ tokenizer:
   max_collision_rate: 0.10
   min_level_utilization: 0.10
   seed: 42
+
+recommendation:
+  processed_dir: data/processed/sports_to_clothing
+  tokenizer_dir: artifacts/tokenizer/sports_to_clothing
+  output_dir: artifacts/recommendation/sports_to_clothing
+  hidden_dim: 128
+  reasoning_steps: 3
+  prefix_length: 4
+  max_sequence_length: 50
+  batch_size: 256
+  evaluation_batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  max_epochs: 100
+  evaluation_every: 5
+  patience: 5
+  retrieval_temperature: 0.1
+  top_ks: [5, 10, 20]
+  candidate_chunk_size: 2048
+  rerank_candidates: 200
+  seed: 42

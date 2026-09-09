@@ -5,6 +5,7 @@ from pathlib import Path
 from cdr_framework.experiment_config import (
     AmazonPreprocessingConfig,
     QwenEmbeddingConfig,
+    RecommendationTrainingConfig,
     TokenizerTrainingConfig,
 )
 
@@ -84,6 +85,21 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
             self.assertEqual(config.hidden_dim, 128)
             self.assertEqual(config.codebook_size, 512)
             self.assertEqual(config.token_length, 4)
+
+    def test_loads_formal_recommendation_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                "recommendation:\n"
+                "  hidden_dim: 128\n"
+                "  max_epochs: 40\n"
+                "  top_ks: [5, 10, 20]\n",
+                encoding="utf-8",
+            )
+            config = RecommendationTrainingConfig.from_yaml(path)
+            self.assertEqual(config.hidden_dim, 128)
+            self.assertEqual(config.max_epochs, 40)
+            self.assertEqual(config.top_ks, (5, 10, 20))
 
 
 if __name__ == "__main__":

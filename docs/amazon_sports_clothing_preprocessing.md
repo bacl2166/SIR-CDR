@@ -406,14 +406,27 @@ python -m json.tool artifacts/tokenizer/sports_to_clothing/manifest.json
 
 ### 13.5 后续流水线
 
-预处理验收通过后，后续阶段计划提供：
+Tokenizer v2 验收通过后，启动正式推荐训练：
 
 ```bash
-python experiments/train.py --config configs/amazon_sports_clothing.yaml
-python experiments/evaluate.py --config configs/amazon_sports_clothing.yaml
+nohup python -u experiments/train_recommender.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda \
+  > logs/train_recommender.log 2>&1 &
+echo $! | tee logs/train_recommender.pid
 ```
 
-推荐模型训练和评测脚本仍处于待实现状态。在对应脚本提交前，不应在服务器执行这些命令。只有 Embedding 阶段需要加载 `DASHSCOPE_API_KEY`。
+训练以全部目标域物品计算 softmax，不进行随机负采样。验证和测试首先对完整目标目录评分，再对完整目录中得分最高的候选执行 Semantic ID 生成重排。训练只使用 `train.jsonl`，早停只使用 `validation.jsonl`；选定最佳 checkpoint 后，测试集仅评测一次：
+
+```bash
+python experiments/evaluate_recommender.py \
+  --config configs/amazon_sports_clothing.yaml \
+  --device cuda \
+  --split test \
+  2>&1 | tee logs/evaluate_test.log
+```
+
+正式训练和评测阶段不读取 `DASHSCOPE_API_KEY`，只有 Embedding 阶段需要加载 API 环境变量。
 
 ## 14. 可复现性记录
 
