@@ -16,7 +16,7 @@
 - 推荐方向：Sports -> Clothing。
 - 物品特征：仅使用商品文本信息。
 - 原始商品 ID：只用于索引、监督标签和结果反查，不参与特征编码。
-- 文本向量：阿里云百炼 `text-embedding-v4`，输出 768 维。
+- 文本向量：本地 `Qwen/Qwen3-Embedding-8B`，MRL 输出 768 维。
 - 评测：全目标域评测，不使用随机负采样。
 
 ## 2. 与 GenCDR 的关系
@@ -240,30 +240,34 @@ Description: <description>.
 - 解码 HTML 实体并移除 HTML 标签。
 - 合并重复空白。
 - 保留英文商品名称和必要标点。
-- 限制极长字段，避免超过 API 输入上限。
+- 限制极长字段，避免超过本地 embedding 模型的输入上限和显存预算。
 - 不使用测试阶段用户评论生成商品静态文本。
 - 记录文本模板版本，模板变化后重新生成 Embedding。
 
-## 10. 千问 Embedding
+## 10. Qwen3-Embedding-8B
 
 首轮实验固定：
 
 ```text
-provider: qwen
-model: text-embedding-v4
+provider: qwen3_local
+model: Qwen/Qwen3-Embedding-8B
 dimension: 768
-encoding_format: float
+batch_size: 1
+device: cuda
+max_sequence_length: 8192
 ```
 
-加载服务器环境变量：
+下载模型并设置本地目录：
 
 ```bash
-source /root/autodl-tmp/sir-cdr-api.env
-test -n "$DASHSCOPE_API_KEY" && echo "API key loaded"
-test -n "$DASHSCOPE_BASE_URL" && echo "API base URL loaded"
+python - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download("Qwen/Qwen3-Embedding-8B", local_dir="/root/autodl-tmp/models/Qwen3-Embedding-8B")
+PY
+export QWEN3_EMBEDDING_MODEL_PATH=/root/autodl-tmp/models/Qwen3-Embedding-8B
 ```
 
-不要将 API Key 写入配置、日志、命令历史或仓库。已经公开的 Key 必须在百炼控制台重置。
+模型为公共权重，不需要 API Key。模型目录和生成产物不要提交到仓库。
 
 Embedding 阶段必须支持：
 
@@ -271,19 +275,19 @@ Embedding 阶段必须支持：
 - 输出统一转换为 `float32`。
 - 保存物品索引到向量行号的映射。
 - 每批完成后持久化进度。
-- 对超时、限流和临时服务错误执行有限次数重试。
-- 已成功缓存的物品不能重复调用 API。
+- 对临时推理错误执行有限次数重试。
+- 已成功缓存的物品不能重复推理。
 
-上述能力由 `cdr_framework/embeddings/qwen.py` 和 `experiments/embed_items.py` 提供。先执行单条商品冒烟测试，它只调用一次 API 且不写入正式产物：
+上述能力由 `qwen3_local.py`、`qwen.py` 和 `embed_items.py` 提供。先执行单条商品冒烟测试，它加载一次本地模型且不写正式产物：
 
 ```bash
-source /root/autodl-tmp/sir-cdr-api.env
+export QWEN3_EMBEDDING_MODEL_PATH=/root/autodl-tmp/models/Qwen3-Embedding-8B
 python experiments/embed_items.py \
   --config configs/amazon_sports_clothing.yaml \
   --smoke-test
 ```
 
-冒烟测试确认模型为 `text-embedding-v4`、维度为 `768` 后，启动完整任务：
+冒烟测试确认模型为 `Qwen/Qwen3-Embedding-8B`、维度为 `768` 后，启动完整任务：
 
 ```bash
 nohup python -u experiments/embed_items.py \
@@ -292,7 +296,7 @@ nohup python -u experiments/embed_items.py \
 echo $! | tee logs/embed_items.pid
 ```
 
-每批结果保存在 `artifacts/embeddings/sports_to_clothing/chunks/`。进程中断后重新执行同一命令会复用已完成批次。只有输入文本、模型、维度或批大小发生变化时才使用 `--force` 从头生成。
+每批结果保存在 `artifacts/embeddings/qwen3_8b/sports_to_clothing/chunks/`。进程中断后重新执行同一命令会复用已完成批次。输入文本、模型、维度、批大小或最大序列长度变化时必须使用新的输出目录或 `--force` 从头生成。
 
 ## 11. 两阶段训练
 
@@ -384,7 +388,7 @@ echo $! | tee logs/train_tokenizer.pid
 
 训练默认使用 768 维输入、128 维隐空间、每层 512 个码字和长度为 4 的 Semantic ID。流程先训练领域自适应连续编码器，再对完整物品隐向量逐层拟合相互独立的残差 K-means 码本，避免同一码本重复量化造成离散表示坍缩。每轮保存 `training_state.pt`，中断后重新运行同一命令即可继续。
 
-输出包括 `tokenizer.pt`、`semantic_ids.pt`、`item_semantic_ids.jsonl`、`item_latents.pt`、`training_history.json`、`quality_report.json` 和 `manifest.json`。只有总体碰撞率不超过 `max_collision_rate` 且每层码本利用率不低于 `min_level_utilization` 时才会写入 `manifest.json`。该阶段不读取千问 API Key。
+输出包括 `tokenizer.pt`、`semantic_ids.pt`、`item_semantic_ids.jsonl`、`item_latents.pt`、`training_history.json`、`quality_report.json` 和 `manifest.json`。只有总体碰撞率不超过 `max_collision_rate` 且每层码本利用率不低于 `min_level_utilization` 时才会写入 `manifest.json`。该阶段不再加载 Qwen3-Embedding-8B。
 
 旧版共享码本输出的 `schema_version` 为 1，不能用于后续训练。更新代码后首次运行必须使用 `--force`：
 
@@ -400,8 +404,8 @@ echo $! | tee logs/train_tokenizer_v2.pid
 完成后验收：
 
 ```bash
-python -m json.tool artifacts/tokenizer/sports_to_clothing/quality_report.json
-python -m json.tool artifacts/tokenizer/sports_to_clothing/manifest.json
+python -m json.tool artifacts/tokenizer/qwen3_8b/sports_to_clothing/quality_report.json
+python -m json.tool artifacts/tokenizer/qwen3_8b/sports_to_clothing/manifest.json
 ```
 
 ### 13.5 后续流水线
@@ -426,7 +430,7 @@ python experiments/evaluate_recommender.py \
   2>&1 | tee logs/evaluate_test.log
 ```
 
-正式训练和评测阶段不读取 `DASHSCOPE_API_KEY`，只有 Embedding 阶段需要加载 API 环境变量。
+正式训练和评测阶段不加载 8B 模型；只有 Embedding 阶段需要设置本地模型目录。
 
 ## 14. 可复现性记录
 
@@ -436,7 +440,7 @@ python experiments/evaluate_recommender.py \
 - Python、PyTorch、CUDA 和 GPU 型号。
 - 数据文件大小与 SHA-256。
 - 原始及过滤后的用户、物品、交互数量。
-- Embedding 模型、维度、API 地域和文本模板版本。
+- Embedding 模型、维度、最大序列长度和文本模板版本。
 - 随机种子、训练日志、最佳 checkpoint 和最终指标。
 
 ```bash
@@ -523,6 +527,6 @@ meta_Clothing_Shoes_and_Jewelry.json.gz
 
 先阅读旧的 `manifest.json` 和 `statistics.json`。只有确定旧结果可被替换时才使用 `--force`；正式实验中应保留与论文结果对应的 manifest、Git 提交哈希和配置快照。
 
-### 16.5 API 或网络错误
+### 16.5 模型下载或网络错误
 
-预处理只需要下载公开数据，不调用千问或 DeepSeek。若日志出现 Embedding API 请求，说明执行了错误阶段，应停止运行并检查命令。任何已暴露的 Key 都必须在供应商控制台撤销后重新创建。
+预处理只需要下载公开数据，不加载 Qwen3 模型。若模型下载失败，应先完成公共权重下载并设置 `QWEN3_EMBEDDING_MODEL_PATH`，再单独执行 embedding 阶段。

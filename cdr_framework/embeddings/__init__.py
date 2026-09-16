@@ -9,6 +9,7 @@ from cdr_framework.embeddings.qwen import (
     run_embedding_job,
     sha256_path,
 )
+from cdr_framework.embeddings.qwen3_local import Qwen3EmbeddingProvider
 
 __all__ = [
     "BaseImageEmbeddingProvider",
@@ -20,6 +21,7 @@ __all__ = [
     "EmbeddingRunResult",
     "ItemText",
     "QwenTextEmbeddingProvider",
+    "Qwen3EmbeddingProvider",
     "build_text_embedding_provider",
     "load_item_texts",
     "run_embedding_job",

@@ -119,6 +119,7 @@ def run_embedding_job(
     retry_initial_seconds: float,
     force: bool = False,
     sleep: Callable[[float], None] = time.sleep,
+    identity_metadata: dict[str, object] | None = None,
 ) -> EmbeddingRunResult:
     output = Path(output_dir)
     if force and output.exists():
@@ -136,6 +137,11 @@ def run_embedding_job(
         "batch_size": batch_size,
         "item_count": len(items),
     }
+    metadata = identity_metadata or {}
+    duplicate_keys = identity.keys() & metadata.keys()
+    if duplicate_keys:
+        raise ValueError(f"Embedding identity metadata repeats reserved keys: {sorted(duplicate_keys)}")
+    identity.update(metadata)
     progress_path = output / "progress.json"
     if progress_path.exists():
         previous = json.loads(progress_path.read_text(encoding="utf-8"))

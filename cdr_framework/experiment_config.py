@@ -48,20 +48,27 @@ class QwenEmbeddingConfig:
     retry_initial_seconds: float = 2.0
     api_key_env: str = "DASHSCOPE_API_KEY"
     base_url_env: str = "DASHSCOPE_BASE_URL"
+    device: str = "cuda"
+    max_sequence_length: int = 8192
+    model_path_env: str = "QWEN3_EMBEDDING_MODEL_PATH"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input_path", Path(self.input_path))
         object.__setattr__(self, "output_dir", Path(self.output_dir))
-        if self.provider.lower() != "qwen":
-            raise ValueError("The first formal embedding run requires provider=qwen.")
+        if self.provider.lower() not in {"qwen", "qwen3_local"}:
+            raise ValueError("Embedding provider must be qwen or qwen3_local.")
         if not self.model:
             raise ValueError("Embedding model must not be empty.")
         if self.dimension <= 0 or self.batch_size <= 0:
             raise ValueError("Embedding dimension and batch_size must be positive.")
         if self.max_retries < 0 or self.retry_initial_seconds < 0:
             raise ValueError("Retry settings must be non-negative.")
-        if not self.api_key_env or not self.base_url_env:
+        if self.max_sequence_length <= 0:
+            raise ValueError("Embedding max_sequence_length must be positive.")
+        if self.provider.lower() == "qwen" and (not self.api_key_env or not self.base_url_env):
             raise ValueError("Embedding credential environment names must not be empty.")
+        if self.provider.lower() == "qwen3_local" and not self.model_path_env:
+            raise ValueError("Local Qwen3 model_path_env must not be empty.")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "QwenEmbeddingConfig":

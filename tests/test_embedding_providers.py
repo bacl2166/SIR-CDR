@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -7,12 +8,70 @@ import torch
 
 from cdr_framework.config import EmbeddingConfig
 from cdr_framework.embeddings.api import DeepSeekTextEmbeddingProvider, QwenTextEmbeddingProvider, build_text_embedding_provider
+from cdr_framework.embeddings.qwen3_local import Qwen3EmbeddingProvider
 from cdr_framework.embeddings.cache import CachedEmbeddingStore
 from cdr_framework.embeddings.local import DeterministicHashTextEmbeddingProvider
 from cdr_framework.embeddings.providers import BaseLLMSemanticProvider
 
 
 class EmbeddingProviderTest(unittest.TestCase):
+    def test_qwen3_8b_provider_uses_local_override_and_normalized_mrl_dimension(self):
+        calls = []
+
+        class FakeModel:
+            max_seq_length = None
+            tokenizer = SimpleNamespace(padding_side="right")
+
+            def encode(self, texts, **kwargs):
+                calls.append((texts, kwargs, self.max_seq_length))
+                return torch.arange(1, len(texts) * 8 + 1, dtype=torch.float32).reshape(len(texts), 8)
+
+        def loader(model_name_or_path, **kwargs):
+            calls.append((model_name_or_path, kwargs))
+            return FakeModel()
+
+        with patch.dict("os.environ", {"QWEN3_EMBEDDING_MODEL_PATH": "/models/qwen3-8b"}):
+            provider = Qwen3EmbeddingProvider(
+                model="Qwen/Qwen3-Embedding-8B",
+                dim=3,
+                device="cuda",
+                max_sequence_length=4096,
+                model_loader=loader,
+            )
+            vectors = provider.encode_text(["sports jacket", "running shoes"])
+
+        self.assertEqual(calls[0][0], "/models/qwen3-8b")
+        self.assertEqual(calls[0][1]["device"], "cuda")
+        self.assertEqual(calls[0][1]["model_kwargs"]["torch_dtype"], torch.bfloat16)
+        self.assertEqual(calls[0][1]["model_kwargs"]["attn_implementation"], "sdpa")
+        self.assertNotIn("tokenizer_kwargs", calls[0][1])
+        self.assertEqual(provider._encoder.tokenizer.padding_side, "left")
+        self.assertEqual(calls[1][0], ["sports jacket", "running shoes"])
+        self.assertEqual(calls[1][2], 4096)
+        self.assertEqual(tuple(vectors.shape), (2, 3))
+        self.assertEqual(vectors.dtype, torch.float32)
+        self.assertTrue(torch.allclose(vectors.norm(dim=1), torch.ones(2), atol=1e-6))
+
+    def test_qwen3_8b_provider_loads_model_only_when_encoding(self):
+        loaded = []
+
+        class FakeModel:
+            max_seq_length = 32
+
+            def encode(self, texts, **kwargs):
+                return torch.ones((len(texts), 4))
+
+        provider = Qwen3EmbeddingProvider(
+            dim=4,
+            device="cpu",
+            model_loader=lambda *args, **kwargs: loaded.append((args, kwargs)) or FakeModel(),
+        )
+        self.assertEqual(loaded, [])
+        self.assertEqual(tuple(provider.encode_text([]).shape), (0, 4))
+        self.assertEqual(loaded, [])
+        provider.encode_text(["coat"])
+        self.assertEqual(len(loaded), 1)
+
     def test_cached_embedding_store_round_trips_tensors(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = CachedEmbeddingStore(Path(tmp))

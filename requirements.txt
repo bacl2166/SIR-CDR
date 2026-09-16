@@ -18,6 +18,7 @@ scikit-learn==1.7.1
 # Generative recommendation, semantic encoding, and efficient tuning.
 transformers==4.53.2
 sentence-transformers==3.3.1
+huggingface-hub==0.34.4
 datasets==4.0.0
 accelerate==1.9.0
 peft==0.16.0
@@ -28,6 +29,6 @@ PyYAML==6.0.2
 requests==2.32.4
 tqdm==4.67.1
 
-# Reserved embedding API clients. DeepSeek and Qwen both support
-# OpenAI-compatible endpoints; credentials must be supplied by environment.
+# Legacy/reserved embedding API clients. The active Qwen3-Embedding-8B path
+# runs locally and does not require an API credential.
 openai==1.97.1

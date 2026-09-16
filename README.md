@@ -1,6 +1,25 @@
-# Dual Structural Injection Generative CDR Framework
+# SIR-CDR: Text-only Cross-domain Recommendation
 
-This repository contains a research framework for generative cross-domain recommendation. The implementation combines GenCDR-inspired multimodal embeddings, confidence-aware graph structure, AGCLR-inspired gated latent reasoning, semantic token generation, and LT-Tuning-inspired context prediction feedback (CPF).
+The active v2 pipeline combines cached text embeddings, sparse shared/private graphs,
+gated latent reasoning, context prediction feedback (CPF), and Semantic ID generation.
+It accepts no image or multimodal inputs and learns no raw item-ID embeddings.
+Legacy synthetic and v1 modules remain available only for reproducing earlier runs.
+
+See [the v2 mechanism and server guide](docs/text_cdr_v2.md) for implementation
+scope, inference modes, assumptions, ablations and known experimental limits.
+
+For a file-by-file, function-by-function Chinese walkthrough of environment setup,
+data preparation, model internals, training calls and evaluation, see the
+[complete code and experiment guide](docs/complete_code_guide_zh.md).
+
+```bash
+python experiments/run_text_cdr.py --config configs/text_sports_clothing.yaml --action train --variant full --seeds 42 --device cuda
+```
+
+This uses a separate output directory and requires new embedding, tokenizer and
+recommender training with the local `Qwen/Qwen3-Embedding-8B` backbone.
+Performance improvements require validation on real data; unit tests establish
+correctness, not recommendation quality.
 
 The first real-data targets are:
 
@@ -10,6 +29,7 @@ The first real-data targets are:
 ## Documentation
 
 - [Amazon Sports-to-Clothing preprocessing guide](docs/amazon_sports_clothing_preprocessing.md)
+- [Qwen3-Embedding-8B migration and server guide](docs/qwen3_embedding_8b.md)
 - [Amazon preprocessing implementation plan](docs/superpowers/plans/2026-09-09-amazon-sports-clothing-preprocessing.md)
 
 ## Data Preparation Status
@@ -60,11 +80,16 @@ interactions + metadata
   -> autoregressive token generation and item lookup
 ```
 
-## Embedding API Boundary
+## Embedding Backbone Boundary
 
 External embedding calls are disabled by default. `EmbeddingConfig(enable_api_calls=False)` selects the deterministic local provider, so tests and synthetic experiments do not require network access or credentials.
 
-`QwenTextEmbeddingProvider` implements the OpenAI-compatible `text-embedding-v4` call and reads credentials from `DASHSCOPE_API_KEY` and `DASHSCOPE_BASE_URL`. `DeepSeekTextEmbeddingProvider` remains a reserved fallback. Secrets must not be written into configuration files. Qwen outputs preserve the existing `encode_text(...) -> torch.Tensor` interface and the batch runner persists completed chunks before training consumes them.
+The active v2 configuration uses the official local `Qwen/Qwen3-Embedding-8B`
+weights in BF16 and exports normalized 768-dimensional MRL vectors. Set
+`QWEN3_EMBEDDING_MODEL_PATH` to a downloaded model directory; if it is unset,
+Sentence Transformers downloads the public Hugging Face model. The legacy
+`QwenTextEmbeddingProvider` remains available for reproducing the earlier
+OpenAI-compatible `text-embedding-v4` run.
 
 Provider selection is centralized:
 
@@ -80,10 +105,10 @@ provider = build_text_embedding_provider(
 )
 ```
 
-After preprocessing, verify one real Qwen request before starting the resumable full job:
+After preprocessing, download the 8B weights and verify one local embedding:
 
 ```bash
-source /root/autodl-tmp/sir-cdr-api.env
+export QWEN3_EMBEDDING_MODEL_PATH=/root/autodl-tmp/models/Qwen3-Embedding-8B
 python experiments/embed_items.py \
   --config configs/amazon_sports_clothing.yaml \
   --smoke-test
@@ -100,7 +125,7 @@ python experiments/train_tokenizer.py \
   --device cuda
 ```
 
-The tokenizer first learns domain-adaptive continuous item representations and then fits one data-driven residual K-means codebook per Semantic ID position. A run is marked complete only when its collision rate and every level's codebook utilization pass the configured quality gates. This stage does not call any external API. It exports fixed-length Semantic IDs, independent residual codebooks, item latent vectors, training history, and quality statistics under `artifacts/tokenizer/sports_to_clothing/`.
+The tokenizer first learns domain-adaptive continuous item representations and then fits one data-driven residual K-means codebook per Semantic ID position. A run is marked complete only when its collision rate and every level's codebook utilization pass the configured quality gates. This stage does not call any external API. It exports fixed-length Semantic IDs, independent residual codebooks, item latent vectors, training history, and quality statistics under `artifacts/tokenizer/qwen3_8b/sports_to_clothing/`.
 
 Outputs created by the obsolete shared-codebook schema must be restarted once:
 

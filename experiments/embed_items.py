@@ -8,6 +8,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from cdr_framework.embeddings import (  # noqa: E402
+    Qwen3EmbeddingProvider,
     QwenTextEmbeddingProvider,
     load_item_texts,
     run_embedding_job,
@@ -18,7 +19,7 @@ from cdr_framework.experiment_config import QwenEmbeddingConfig  # noqa: E402
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate resumable Qwen text-embedding-v4 item vectors."
+        description="Generate resumable Qwen API or local Qwen3-Embedding-8B item vectors."
     )
     parser.add_argument("--config", required=True, help="Path to the experiment YAML file.")
     parser.add_argument(
@@ -42,15 +43,26 @@ def run(config: QwenEmbeddingConfig, *, smoke_test: bool, force: bool) -> int:
     input_path = _repository_path(config.input_path)
     output_dir = _repository_path(config.output_dir)
     items = load_item_texts(input_path, limit=1 if smoke_test else None)
-    provider = QwenTextEmbeddingProvider(
-        api_key_env=config.api_key_env,
-        base_url_env=config.base_url_env,
-        model=config.model,
-        dim=config.dimension,
-    )
+    if config.provider.lower() == "qwen3_local":
+        provider = Qwen3EmbeddingProvider(
+            model=config.model,
+            dim=config.dimension,
+            batch_size=config.batch_size,
+            device=config.device,
+            max_sequence_length=config.max_sequence_length,
+            model_path_env=config.model_path_env,
+        )
+    else:
+        provider = QwenTextEmbeddingProvider(
+            api_key_env=config.api_key_env,
+            base_url_env=config.base_url_env,
+            model=config.model,
+            dim=config.dimension,
+        )
     if smoke_test:
         vectors = provider.encode_text([items[0].text])
         print("Qwen embedding smoke test succeeded")
+        print(f"Provider: {config.provider}")
         print(f"Model: {config.model}")
         print(f"Items: {vectors.shape[0]}")
         print(f"Dimension: {vectors.shape[1]}")
@@ -67,6 +79,11 @@ def run(config: QwenEmbeddingConfig, *, smoke_test: bool, force: bool) -> int:
         max_retries=config.max_retries,
         retry_initial_seconds=config.retry_initial_seconds,
         force=force,
+        identity_metadata={
+            "provider": config.provider,
+            "max_sequence_length": config.max_sequence_length,
+            "normalized": config.provider.lower() == "qwen3_local",
+        },
     )
     print("Qwen item embedding completed")
     print(f"Items: {result.item_count}")

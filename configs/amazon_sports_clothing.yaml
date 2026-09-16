@@ -8,21 +8,22 @@ dataset:
   seed: 42
 
 embedding:
-  provider: qwen
-  model: text-embedding-v4
+  provider: qwen3_local
+  model: Qwen/Qwen3-Embedding-8B
   dimension: 768
-  batch_size: 10
+  batch_size: 1
   max_retries: 5
   retry_initial_seconds: 2.0
   input_path: data/processed/sports_to_clothing/item_texts.jsonl
-  output_dir: artifacts/embeddings/sports_to_clothing
-  api_key_env: DASHSCOPE_API_KEY
-  base_url_env: DASHSCOPE_BASE_URL
+  output_dir: artifacts/embeddings/qwen3_8b/sports_to_clothing
+  device: cuda
+  max_sequence_length: 8192
+  model_path_env: QWEN3_EMBEDDING_MODEL_PATH
 
 tokenizer:
-  embeddings_path: artifacts/embeddings/sports_to_clothing/text_embeddings.pt
+  embeddings_path: artifacts/embeddings/qwen3_8b/sports_to_clothing/text_embeddings.pt
   item_texts_path: data/processed/sports_to_clothing/item_texts.jsonl
-  output_dir: artifacts/tokenizer/sports_to_clothing
+  output_dir: artifacts/tokenizer/qwen3_8b/sports_to_clothing
   input_dim: 768
   hidden_dim: 128
   codebook_size: 512
@@ -40,8 +41,8 @@ tokenizer:
 
 recommendation:
   processed_dir: data/processed/sports_to_clothing
-  tokenizer_dir: artifacts/tokenizer/sports_to_clothing
-  output_dir: artifacts/recommendation/sports_to_clothing
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/sports_to_clothing
+  output_dir: artifacts/recommendation/qwen3_8b/sports_to_clothing
   hidden_dim: 128
   reasoning_steps: 3
   prefix_length: 4

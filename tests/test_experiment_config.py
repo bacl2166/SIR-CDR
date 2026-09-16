@@ -69,6 +69,31 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
             self.assertEqual(config.dimension, 768)
             self.assertEqual(config.batch_size, 10)
 
+    def test_loads_local_qwen3_8b_embedding_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(
+                "embedding:\n"
+                "  provider: qwen3_local\n"
+                "  model: Qwen/Qwen3-Embedding-8B\n"
+                "  dimension: 768\n"
+                "  batch_size: 1\n"
+                "  device: cuda\n"
+                "  max_sequence_length: 8192\n"
+                "  model_path_env: QWEN3_EMBEDDING_MODEL_PATH\n",
+                encoding="utf-8",
+            )
+
+            config = QwenEmbeddingConfig.from_yaml(path)
+
+            self.assertEqual(config.provider, "qwen3_local")
+            self.assertEqual(config.model, "Qwen/Qwen3-Embedding-8B")
+            self.assertEqual(config.dimension, 768)
+            self.assertEqual(config.batch_size, 1)
+            self.assertEqual(config.device, "cuda")
+            self.assertEqual(config.max_sequence_length, 8192)
+            self.assertEqual(config.model_path_env, "QWEN3_EMBEDDING_MODEL_PATH")
+
     def test_loads_tokenizer_training_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
