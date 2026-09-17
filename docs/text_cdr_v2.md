@@ -129,6 +129,25 @@ explicitly if using a custom YAML. Mode overrides are evaluation-only and
 stored in distinct reports. The checkpoint was selected using the configured
 validation mode, which must be reported when comparing other inference modes.
 
+### Validation-only fusion sweep
+
+After confirming that the configured candidate pool matches exhaustive
+validation at the reported cutoffs, tune only the generation contribution:
+
+```bash
+python -u experiments/sweep_text_fusion.py \
+  --config configs/text_sports_clothing.yaml \
+  --variant full --seed 42 --device cuda \
+  --weights 0 0.1 0.25 0.5 1 2 \
+  --batch-size 16
+```
+
+The command loads the unchanged best checkpoint, evaluates only the validation
+split, and selects by `NDCG@10`. It never updates model parameters or reads the
+test split. Reports are fingerprinted and written beside the checkpoint as
+`validation_text_fusion_sweep_<hash>.json`; rerunning the same command skips
+completed weights. Exact ties prefer the smaller generation weight.
+
 ## Ablation suite
 
 ```bash

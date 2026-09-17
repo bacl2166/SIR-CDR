@@ -157,6 +157,16 @@ python experiments/evaluate_recommender.py \
   --split test
 ```
 
+For the text-only v2 model, tune retrieval/generation fusion on validation
+without retraining or touching test data:
+
+```bash
+python experiments/sweep_text_fusion.py \
+  --config configs/text_sports_clothing.yaml \
+  --variant full --seed 42 --device cuda \
+  --weights 0 0.1 0.25 0.5 1 2
+```
+
 ## Verify
 
 ```bash
