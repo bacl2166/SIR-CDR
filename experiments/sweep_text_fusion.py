@@ -38,6 +38,7 @@ def sweep(
     weights=(0.0, 0.1, 0.25, 0.5, 1.0, 2.0),
     batch_size: int = 16,
     rerank_candidates: int | None = None,
+    fusion_norm: str = "none",
 ) -> dict[str, object]:
     weights = sorted(set(float(weight) for weight in weights))
     if not weights or any(not math.isfinite(weight) or weight < 0 for weight in weights):
@@ -54,6 +55,8 @@ def sweep(
     runtime_base = replace(config, evaluation_batch_size=batch_size)
     if rerank_candidates is not None:
         runtime_base = replace(runtime_base, rerank_candidates=rerank_candidates)
+    if fusion_norm != "none":
+        setattr(runtime_base, "fusion_norm", fusion_norm)
 
     identity = {
         "training_identity": training_identity,
@@ -63,6 +66,7 @@ def sweep(
         "mode": "hybrid",
         "selection_metric": "NDCG@10",
         "rerank_candidates": runtime_base.rerank_candidates,
+        "fusion_norm": getattr(runtime_base, "fusion_norm", "none"),
         "retrieval_weight": runtime_base.retrieval_weight,
         "generation_weights": weights,
         "evaluation_batch_size": batch_size,
@@ -127,6 +131,8 @@ def main() -> None:
                         help="Override config.output_dir before variant suffix (same as run_text_cdr.py).")
     parser.add_argument("--rerank-candidates", type=int, default=None,
                         help="Override rerank_candidates at evaluation time (training signature unchanged).")
+    parser.add_argument("--fusion-norm", choices=("none", "softmax"), default="none",
+                        help="Normalize retrieval/generation scores before fusion (runtime only, no retrain).")
     args = parser.parse_args()
 
     config = TextCDRConfig.from_yaml(args.config)
@@ -142,7 +148,7 @@ def main() -> None:
         config = replace(config, output_dir=args.output_root.resolve())
     config = variant_config(config, args.variant, args.seed)
     sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size,
-          rerank_candidates=args.rerank_candidates)
+          rerank_candidates=args.rerank_candidates, fusion_norm=args.fusion_norm)
 
 
 if __name__ == "__main__":

@@ -230,6 +230,12 @@ class TextSIRCDR(nn.Module):
                 stop = start + self.config.decode_chunk_size
                 gen[start:stop] = self.sequence_scores(state["prefix"][batch_rows[start:stop]], flat_ids[start:stop])
             eligible = torch.isfinite(values)
+            if getattr(self.config, "fusion_norm", "none") == "softmax":
+                # Normalize both score families to probability scale before mixing
+                # (retrieval cosine/temperature vs decoder log-probabilities have
+                # incompatible magnitudes; softmax keeps the blend well-conditioned).
+                values = torch.softmax(values, dim=-1)
+                gen = torch.softmax(gen, dim=-1)
             values = self.config.retrieval_weight * values + self.config.generation_weight * gen.reshape_as(values)
             values = values.masked_fill(~eligible, -torch.inf)
         ranked_scores, order = values.topk(min(top_k, count), 1)
