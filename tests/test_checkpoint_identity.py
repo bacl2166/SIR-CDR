@@ -80,5 +80,20 @@ class CheckpointIdentityTests(unittest.TestCase):
         self.assertNotIn("fusion_norm", asdict(base))
 
 
+    def test_fusion_norm_reinjected_after_replace_loop(self):
+        from dataclasses import replace
+
+        from cdr_framework.text_config import TextCDRConfig
+
+        base = TextCDRConfig.from_yaml(str(ROOT / "configs/text_sports_clothing.yaml"))
+        runtime_base = replace(base, evaluation_batch_size=16)
+        object.__setattr__(runtime_base, "fusion_norm", "softmax")
+        for weight in (0.5, 1.0):
+            runtime = replace(runtime_base, generation_weight=weight)
+            if getattr(runtime_base, "fusion_norm", "none") != "none":
+                object.__setattr__(runtime, "fusion_norm", getattr(runtime_base, "fusion_norm", "none"))
+            self.assertEqual(getattr(runtime, "fusion_norm", "none"), "softmax")
+
+
 if __name__ == "__main__":
     unittest.main()

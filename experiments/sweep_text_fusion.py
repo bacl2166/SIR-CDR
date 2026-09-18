@@ -103,6 +103,10 @@ def sweep(
             print(f"Reusing completed weight: {weight:g}", flush=True)
             continue
         runtime = replace(runtime_base, generation_weight=weight)
+        if fusion_norm != "none":
+            # dataclasses.replace drops dynamic attributes; re-inject so the
+            # runtime normalization actually reaches rank().
+            object.__setattr__(runtime, "fusion_norm", fusion_norm)
         model.config = runtime
         metrics = evaluate(model, rows, runtime, device, mode="hybrid")
         result = {
