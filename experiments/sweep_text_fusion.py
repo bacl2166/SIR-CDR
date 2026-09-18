@@ -22,6 +22,7 @@ from cdr_framework.text_training import (  # noqa: E402
     load_rows,
     signature,
     variant_config,
+    verify_checkpoint_identity,
 )
 
 
@@ -39,6 +40,7 @@ def sweep(
     batch_size: int = 16,
     rerank_candidates: int | None = None,
     fusion_norm: str = "none",
+    allow_code_mismatch: bool = False,
 ) -> dict[str, object]:
     weights = sorted(set(float(weight) for weight in weights))
     if not weights or any(not math.isfinite(weight) or weight < 0 for weight in weights):
@@ -49,8 +51,9 @@ def sweep(
     checkpoint_path = config.output_dir / "best_model.pt"
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     training_identity = signature(config)
-    if checkpoint.get("identity") != training_identity:
-        raise RuntimeError("Checkpoint inputs/config/code mismatch; use the unchanged training YAML.")
+    ok, why = verify_checkpoint_identity(checkpoint, config, require_code=not allow_code_mismatch)
+    if not ok:
+        raise RuntimeError(f"Checkpoint {why}; use the unchanged training YAML.")
 
     runtime_base = replace(config, evaluation_batch_size=batch_size)
     if rerank_candidates is not None:
@@ -66,6 +69,7 @@ def sweep(
         "mode": "hybrid",
         "selection_metric": "NDCG@10",
         "rerank_candidates": runtime_base.rerank_candidates,
+        "allow_code_mismatch": allow_code_mismatch,
         "fusion_norm": getattr(runtime_base, "fusion_norm", "none"),
         "retrieval_weight": runtime_base.retrieval_weight,
         "generation_weights": weights,
@@ -133,6 +137,8 @@ def main() -> None:
                         help="Override rerank_candidates at evaluation time (training signature unchanged).")
     parser.add_argument("--fusion-norm", choices=("none", "softmax"), default="none",
                         help="Normalize retrieval/generation scores before fusion (runtime only, no retrain).")
+    parser.add_argument("--allow-code-mismatch", action="store_true",
+                        help="Inference-only: accept newer code while config/artifacts are still verified; recorded in report.")
     args = parser.parse_args()
 
     config = TextCDRConfig.from_yaml(args.config)
@@ -148,7 +154,8 @@ def main() -> None:
         config = replace(config, output_dir=args.output_root.resolve())
     config = variant_config(config, args.variant, args.seed)
     sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size,
-          rerank_candidates=args.rerank_candidates, fusion_norm=args.fusion_norm)
+          rerank_candidates=args.rerank_candidates, fusion_norm=args.fusion_norm,
+          allow_code_mismatch=args.allow_code_mismatch)
 
 
 if __name__ == "__main__":

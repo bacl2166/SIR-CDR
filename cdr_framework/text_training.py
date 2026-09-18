@@ -53,6 +53,27 @@ def signature(config):
             "code": {name: _sha256(Path(__file__).parent / name) for name in files}}
 
 
+def verify_checkpoint_identity(checkpoint, config, require_code=True):
+    """Layered checkpoint identity check.
+
+    version/config/artifacts always must match the stored training identity; the
+    code fingerprint may drift for inference-only tooling (explicit opt-in, the
+    drift is recorded in the report for audit). The data/config layers can never
+    be disabled.
+    """
+    stored = checkpoint.get("identity") if isinstance(checkpoint, dict) else None
+    if not isinstance(stored, dict):
+        return False, "missing or invalid stored identity"
+    current = signature(config)
+    for layer in ("version", "config", "artifacts"):
+        if current.get(layer) != stored.get(layer):
+            return False, f"{layer} mismatch"
+    code_drift = current.get("code") != stored.get("code")
+    if code_drift and require_code:
+        return False, "code mismatch"
+    return True, ("code mismatch allowed (inference-only)" if code_drift else "ok")
+
+
 def build_model(config, device):
     catalog = load_fixed_catalog(config)
     if not torch.isfinite(catalog.item_latents).all() or not torch.isfinite(catalog.codebooks).all():
@@ -185,12 +206,13 @@ def train(config, device, *, max_epochs_this_run=None):
     return result
 
 
-def evaluate_checkpoint(config, device, split="validation", mode=None):
+def evaluate_checkpoint(config, device, split="validation", mode=None, code_check=True):
     if split not in {"validation", "test"}:
         raise ValueError("Invalid split")
     checkpoint = torch.load(config.output_dir / "best_model.pt", map_location="cpu", weights_only=True)
-    if checkpoint["identity"] != signature(config):
-        raise RuntimeError("Evaluation checkpoint inputs/config/code mismatch")
+    ok, why = verify_checkpoint_identity(checkpoint, config, require_code=code_check)
+    if not ok:
+        raise RuntimeError(f"Evaluation checkpoint {why}")
     model, catalog = build_model(config, device)
     model.load_state_dict(checkpoint["model"])
     result = {"epoch": checkpoint["epoch"], "split": split, "mode": mode or config.inference_mode,

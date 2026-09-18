@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--split", choices=("validation", "test"), default="validation")
     parser.add_argument("--mode", choices=("retrieval", "hybrid", "exhaustive", "generate"))
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--allow-code-mismatch", action="store_true",
+                        help="Inference-only: accept newer code while config/artifacts are still verified.")
     args = parser.parse_args()
     config = TextCDRConfig.from_yaml(args.config)
     config = replace(config, **{name: value if value.is_absolute() else ROOT / value
@@ -34,7 +36,8 @@ def main():
             current = variant_config(config, variant, seed)
             print(f"Variant={variant} seed={seed} output={current.output_dir}", flush=True)
             if args.action == "evaluate":
-                result = evaluate_checkpoint(current, torch.device(args.device), args.split, args.mode)
+                result = evaluate_checkpoint(current, torch.device(args.device), args.split, args.mode,
+                                             code_check=not args.allow_code_mismatch)
             else:
                 result = train(current, torch.device(args.device))
             results.append({"variant": variant, "seed": seed, "result": result})
