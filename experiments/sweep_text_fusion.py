@@ -118,6 +118,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--weights", nargs="+", type=float, default=[0, 0.1, 0.25, 0.5, 1, 2])
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--output-root", type=Path,
+                        help="Override config.output_dir before variant suffix (same as run_text_cdr.py).")
     args = parser.parse_args()
 
     config = TextCDRConfig.from_yaml(args.config)
@@ -129,6 +131,8 @@ def main() -> None:
             for path in [getattr(config, name)]
         },
     )
+    if args.output_root is not None:
+        config = replace(config, output_dir=args.output_root.resolve())
     config = variant_config(config, args.variant, args.seed)
     sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size)
 
