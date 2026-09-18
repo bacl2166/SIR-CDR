@@ -37,6 +37,7 @@ def sweep(
     *,
     weights=(0.0, 0.1, 0.25, 0.5, 1.0, 2.0),
     batch_size: int = 16,
+    rerank_candidates: int | None = None,
 ) -> dict[str, object]:
     weights = sorted(set(float(weight) for weight in weights))
     if not weights or any(not math.isfinite(weight) or weight < 0 for weight in weights):
@@ -50,6 +51,10 @@ def sweep(
     if checkpoint.get("identity") != training_identity:
         raise RuntimeError("Checkpoint inputs/config/code mismatch; use the unchanged training YAML.")
 
+    runtime_base = replace(config, evaluation_batch_size=batch_size)
+    if rerank_candidates is not None:
+        runtime_base = replace(runtime_base, rerank_candidates=rerank_candidates)
+
     identity = {
         "training_identity": training_identity,
         "checkpoint_sha256": _sha256(checkpoint_path),
@@ -57,8 +62,8 @@ def sweep(
         "split": "validation",
         "mode": "hybrid",
         "selection_metric": "NDCG@10",
-        "rerank_candidates": config.rerank_candidates,
-        "retrieval_weight": config.retrieval_weight,
+        "rerank_candidates": runtime_base.rerank_candidates,
+        "retrieval_weight": runtime_base.retrieval_weight,
         "generation_weights": weights,
         "evaluation_batch_size": batch_size,
         "best_epoch": checkpoint["epoch"],
@@ -86,7 +91,7 @@ def sweep(
         if weight in done:
             print(f"Reusing completed weight: {weight:g}", flush=True)
             continue
-        runtime = replace(config, generation_weight=weight, evaluation_batch_size=batch_size)
+        runtime = replace(runtime_base, generation_weight=weight)
         model.config = runtime
         metrics = evaluate(model, rows, runtime, device, mode="hybrid")
         result = {
@@ -120,6 +125,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--output-root", type=Path,
                         help="Override config.output_dir before variant suffix (same as run_text_cdr.py).")
+    parser.add_argument("--rerank-candidates", type=int, default=None,
+                        help="Override rerank_candidates at evaluation time (training signature unchanged).")
     args = parser.parse_args()
 
     config = TextCDRConfig.from_yaml(args.config)
@@ -134,7 +141,8 @@ def main() -> None:
     if args.output_root is not None:
         config = replace(config, output_dir=args.output_root.resolve())
     config = variant_config(config, args.variant, args.seed)
-    sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size)
+    sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size,
+          rerank_candidates=args.rerank_candidates)
 
 
 if __name__ == "__main__":
