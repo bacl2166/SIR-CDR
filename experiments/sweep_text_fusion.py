@@ -59,7 +59,10 @@ def sweep(
     if rerank_candidates is not None:
         runtime_base = replace(runtime_base, rerank_candidates=rerank_candidates)
     if fusion_norm != "none":
-        setattr(runtime_base, "fusion_norm", fusion_norm)
+        # Inference-only dynamic attribute: NOT a dataclass field, so it stays out of
+        # asdict()/signature and old checkpoints remain compatible. The config is a
+        # frozen dataclass, so use object.__setattr__ for this runtime injection.
+        object.__setattr__(runtime_base, "fusion_norm", fusion_norm)
 
     identity = {
         "training_identity": training_identity,

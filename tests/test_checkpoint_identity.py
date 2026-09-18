@@ -67,5 +67,18 @@ class CheckpointIdentityTests(unittest.TestCase):
         self.assertIn("missing", why)
 
 
+    def test_runtime_fusion_norm_injection_stays_out_of_signature(self):
+        from dataclasses import asdict, replace
+
+        from cdr_framework.text_config import TextCDRConfig
+
+        base = TextCDRConfig.from_yaml(str(ROOT / "configs/text_sports_clothing.yaml"))
+        runtime = replace(base, evaluation_batch_size=16)
+        object.__setattr__(runtime, "fusion_norm", "softmax")
+        self.assertEqual(getattr(runtime, "fusion_norm", "none"), "softmax")
+        self.assertNotIn("fusion_norm", asdict(runtime))
+        self.assertNotIn("fusion_norm", asdict(base))
+
+
 if __name__ == "__main__":
     unittest.main()
