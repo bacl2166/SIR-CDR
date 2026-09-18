@@ -41,6 +41,7 @@ def sweep(
     rerank_candidates: int | None = None,
     fusion_norm: str = "none",
     allow_code_mismatch: bool = False,
+    temperature: float | None = None,
 ) -> dict[str, object]:
     weights = sorted(set(float(weight) for weight in weights))
     if not weights or any(not math.isfinite(weight) or weight < 0 for weight in weights):
@@ -58,6 +59,8 @@ def sweep(
     runtime_base = replace(config, evaluation_batch_size=batch_size)
     if rerank_candidates is not None:
         runtime_base = replace(runtime_base, rerank_candidates=rerank_candidates)
+    if temperature is not None:
+        runtime_base = replace(runtime_base, retrieval_temperature=temperature)
     if fusion_norm != "none":
         # Inference-only dynamic attribute: NOT a dataclass field, so it stays out of
         # asdict()/signature and old checkpoints remain compatible. The config is a
@@ -72,6 +75,7 @@ def sweep(
         "mode": "hybrid",
         "selection_metric": "NDCG@10",
         "rerank_candidates": runtime_base.rerank_candidates,
+        "retrieval_temperature": runtime_base.retrieval_temperature,
         "allow_code_mismatch": allow_code_mismatch,
         "fusion_norm": getattr(runtime_base, "fusion_norm", "none"),
         "retrieval_weight": runtime_base.retrieval_weight,
@@ -146,6 +150,8 @@ def main() -> None:
                         help="Normalize retrieval/generation scores before fusion (runtime only, no retrain).")
     parser.add_argument("--allow-code-mismatch", action="store_true",
                         help="Inference-only: accept newer code while config/artifacts are still verified; recorded in report.")
+    parser.add_argument("--temperature", type=float, default=None,
+                        help="Override retrieval_temperature at evaluation time (runtime only, no retrain).")
     args = parser.parse_args()
 
     config = TextCDRConfig.from_yaml(args.config)
@@ -162,7 +168,7 @@ def main() -> None:
     config = variant_config(config, args.variant, args.seed)
     sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size,
           rerank_candidates=args.rerank_candidates, fusion_norm=args.fusion_norm,
-          allow_code_mismatch=args.allow_code_mismatch)
+          allow_code_mismatch=args.allow_code_mismatch, temperature=args.temperature)
 
 
 if __name__ == "__main__":
