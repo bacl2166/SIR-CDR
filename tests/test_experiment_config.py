@@ -126,6 +126,17 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
             self.assertEqual(config.max_epochs, 40)
             self.assertEqual(config.top_ks, (5, 10, 20))
 
+    def test_l4e_yaml_hr_selection_metric_loads(self):
+        from cdr_framework.text_config import TextCDRConfig
+
+        repo_root = Path(__file__).resolve().parents[1]
+        path = repo_root / "configs" / "text_sports_clothing_l4e.yaml"
+        self.assertTrue(path.exists(), f"missing {path}")
+        config = TextCDRConfig.from_yaml(path)
+        self.assertEqual(config.reasoning_steps, 5)
+        self.assertEqual(config.selection_metric, "HR@10")
+        self.assertIn("text_cdr_v3_l4e", str(config.output_dir))
+
 
 if __name__ == "__main__":
     unittest.main()
