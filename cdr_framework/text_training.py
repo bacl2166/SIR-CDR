@@ -16,8 +16,9 @@ from cdr_framework.text_data import load_text_rows, collate_text_rows
 from cdr_framework.text_graph import build_training_graphs
 from cdr_framework.text_model import TextSIRCDR
 
-VERSION = "text-cdr-v2"
-VARIANTS = ("full", "no_graph", "no_reasoning", "single_step", "no_feedback", "no_semantic", "no_cpf_loss", "target_only")
+VERSION = "text-cdr-v3"
+VARIANTS = ("full", "no_graph", "no_reasoning", "single_step", "no_feedback", "no_semantic", "no_cpf_loss",
+            "target_only", "no_proto", "no_cd_inj", "no_sp_inj", "no_lsep", "no_lsh", "no_csum", "v2_legacy")
 
 
 def variant_config(config, variant, seed):
@@ -28,7 +29,18 @@ def variant_config(config, variant, seed):
         "no_reasoning": {"reasoning_enabled": False, "feedback_steps": 1},
         "single_step": {"reasoning_steps": 1}, "no_feedback": {"feedback_steps": 1},
         "no_semantic": {"semantic_enabled": False}, "no_cpf_loss": {"cpf_weight": 0.0},
-        "target_only": {"source_enabled": False, "graph_enabled": False},
+        "target_only": {"source_enabled": False, "graph_enabled": False,
+                        "prototype_enabled": False, "cd_injector_enabled": False,
+                        "sp_injector_enabled": False},
+        "no_proto": {"prototype_enabled": False},
+        "no_cd_inj": {"cd_injector_enabled": False},
+        "no_sp_inj": {"sp_injector_enabled": False},
+        "no_lsep": {"lsep_weight": 0.0},
+        "no_lsh": {"contrastive_alignment": False},
+        "no_csum": {"codebook_summary_enabled": False},
+        "v2_legacy": {"prototype_enabled": False, "cd_injector_enabled": False,
+                      "sp_injector_enabled": False, "codebook_summary_enabled": False,
+                      "contrastive_alignment": False},
     }
     return replace(config, **options[variant], seed=seed,
                    output_dir=config.output_dir / f"{variant}_seed{seed}")

@@ -33,6 +33,17 @@ class TextCDRConfig(RecommendationTrainingConfig):
     rerank_candidates: int = 500
     scheduler_patience: int = 2
     selection_metric: str = "NDCG@10"
+    # Dual structural injection (new design). Defaults enable the full
+    # architecture: prototype-side disentanglement, CD/SP structural
+    # injectors, codebook-summary prefix, contrastive shared alignment
+    # and source-private separation regularization.
+    prototype_enabled: bool = True
+    cd_injector_enabled: bool = True
+    sp_injector_enabled: bool = True
+    codebook_summary_enabled: bool = True
+    contrastive_alignment: bool = True
+    lsep_weight: float = 0.01
+    proto_orth_weight: float = 0.01
 
     def __post_init__(self):
         super().__post_init__()
@@ -42,7 +53,8 @@ class TextCDRConfig(RecommendationTrainingConfig):
                 raise ValueError(f"{name} must be positive")
         if not 0 <= self.dropout < 1:
             raise ValueError("dropout must be in [0, 1)")
-        for name in ("cpf_weight", "alignment_weight", "separation_weight", "generation_weight", "retrieval_weight"):
+        for name in ("cpf_weight", "alignment_weight", "separation_weight", "generation_weight",
+                     "retrieval_weight", "lsep_weight", "proto_orth_weight"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
         if self.generation_weight + self.retrieval_weight <= 0:

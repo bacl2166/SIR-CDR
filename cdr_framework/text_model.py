@@ -5,9 +5,22 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-from cdr_framework.modules import UserImplicitReasoner, AutoregressiveSemanticDecoder, DualStructuralFusionPrefix
+from cdr_framework.modules import (
+    UserImplicitReasoner,
+    AutoregressiveSemanticDecoder,
+    DualStructuralFusionPrefix,
+    TextPrototypeDisentangler,
+    CodebookSummaryPool,
+    CrossDomainStructuralInjector,
+    SpecificDomainStructuralInjector,
+)
 from cdr_framework.modules_cpf import ContextPredictionFeedback
-from cdr_framework.losses import orthogonality_loss, anti_collapse_variance_loss
+from cdr_framework.losses import (
+    orthogonality_loss,
+    anti_collapse_variance_loss,
+    shared_alignment_loss,
+    source_private_separation_loss,
+)
 from cdr_framework.text_graph import SparseDualGraphEncoder
 from cdr_framework.catalog_generation import CatalogTrie, constrained_generate
 
@@ -36,6 +49,10 @@ class TextSIRCDR(nn.Module):
         self.code_proj = nn.Linear(self.centroids.shape[1], h)
         self.item_norm = nn.LayerNorm(h)
         self.graph_encoder = SparseDualGraphEncoder(h, layers=config.graph_layers)
+        self.prototype = TextPrototypeDisentangler(h)
+        self.cd_injector = CrossDomainStructuralInjector(h)
+        self.sp_injector = SpecificDomainStructuralInjector(h)
+        self.codebook_summary = CodebookSummaryPool(h)
         self.structural_gate = nn.Linear(3 * h, h)
         self.source_gru, self.target_gru = nn.GRU(h, h, batch_first=True), nn.GRU(h, h, batch_first=True)
         self.attention = nn.Linear(h, 1)
@@ -63,7 +80,10 @@ class TextSIRCDR(nn.Module):
             })
         else:
             shared = source = target = torch.zeros_like(values)
-        return values, shared, source, target
+        proto = None
+        if self.config.prototype_enabled:
+            proto = self.prototype(values, shared, source, target)
+        return {"base": values, "shared": shared, "source": source, "target": target, "proto": proto}
 
     def sequence(self, base, shared, specific, ids, lengths, gru):
         gate = torch.sigmoid(self.structural_gate(torch.cat([base[ids], shared[ids], specific[ids]], -1)))
@@ -78,7 +98,8 @@ class TextSIRCDR(nn.Module):
 
     def encode(self, batch, items=None):
         items = self.item_states() if items is None else items
-        base, graph_shared, graph_source, graph_target = items
+        base, graph_shared, graph_source, graph_target = items["base"], items["shared"], items["source"], items["target"]
+        proto = items["proto"]
         source = self.sequence(base, graph_shared, graph_source, batch.source_items, batch.source_lengths, self.source_gru)
         target = self.sequence(base, graph_shared, graph_target, batch.target_items, batch.target_lengths, self.target_gru)
         if not self.config.source_enabled:
@@ -88,14 +109,31 @@ class TextSIRCDR(nn.Module):
         transfer = torch.sigmoid(self.transfer_gate(torch.cat([source, target], -1)))
         shared_signal = transfer * source_shared + (1 - transfer) * target_shared
         context = target + transfer * source
+        if self.config.cd_injector_enabled:
+            shared_tokens = proto["tokens_shared"] if proto is not None else base
+            cd_signal = self.cd_injector(
+                shared_tokens, graph_shared, batch.source_items, batch.target_items,
+                user_shared=shared_signal,
+            )
+        else:
+            cd_signal = shared_signal
+        if self.config.sp_injector_enabled:
+            source_tokens = proto["tokens_source"] if proto is not None else base
+            target_tokens = proto["tokens_target"] if proto is not None else base
+            source_sp_signal, target_sp_signal = self.sp_injector(
+                source_tokens, graph_source, target_tokens, graph_target,
+                batch.source_items, batch.target_items,
+            )
+        else:
+            source_sp_signal, target_sp_signal = source_private, target_private
         feedback_losses = []
         states = []
         rounds = self.config.feedback_steps if self.config.reasoning_enabled else 1
         for round_index in range(rounds):
             if self.config.reasoning_enabled:
-                shared, private, reasoning = self.reasoner(context, shared_signal, target_private)
+                shared, private, reasoning = self.reasoner(context, cd_signal, target_sp_signal)
             else:
-                shared, private = shared_signal, target_private
+                shared, private = shared_signal, target_sp_signal
                 reasoning = (shared + private)[:, None]
             prediction = self.cpf.predictor(torch.cat([shared + private, context], -1))
             feedback_losses.append(prediction)
@@ -104,10 +142,15 @@ class TextSIRCDR(nn.Module):
                 gate = torch.sigmoid(self.feedback_gate(torch.cat([context, prediction], -1)))
                 context = context + gate * torch.tanh(self.feedback_proj(prediction))
         query = F.normalize(self.query_head(torch.cat([shared, private, target], -1)), dim=-1)
-        prefix = self.prefix_head(shared, private, shared_signal, target_private, prediction)
+        if self.config.codebook_summary_enabled:
+            summary = self.codebook_summary(shared + private, self.centroids)
+        else:
+            summary = prediction
+        prefix = self.prefix_head(shared, private, cd_signal, target_sp_signal, summary)
         return dict(query=query, prefix=prefix, shared=shared, private=private,
                     source_private=source_private, source_shared=source_shared, target_shared=target_shared,
-                    context=context, states=torch.cat(states, 1), predictions=feedback_losses)
+                    context=context, states=torch.cat(states, 1), predictions=feedback_losses,
+                    source_sp_signal=source_sp_signal, proto=proto)
 
     def forward(self, batch):
         items = self.item_states()
@@ -115,7 +158,7 @@ class TextSIRCDR(nn.Module):
         labels = self.target_index[batch.positive_items]
         if (labels < 0).any():
             raise ValueError("Positive item outside target domain")
-        base = items[0]
+        base = items["base"]
         retrieval = state["query"] @ F.normalize(base[self.target_ids], dim=-1).T / self.config.retrieval_temperature
         retrieval_loss = F.cross_entropy(retrieval, labels)
         tokens = self.tokens[batch.positive_items]
@@ -128,16 +171,28 @@ class TextSIRCDR(nn.Module):
         cpf = torch.stack([1 - F.cosine_similarity(p, positive).mean() for p in state["predictions"]]).mean()
         cpf = cpf + 0.1 * (1 - F.cosine_similarity(state["shared"], state["context"]).mean())
         cpf = cpf + 0.1 * anti_collapse_variance_loss(state["states"])
-        alignment = (1 - F.cosine_similarity(state["source_shared"], state["target_shared"])).mean()
+        if self.config.contrastive_alignment:
+            alignment = shared_alignment_loss(state["source_shared"], state["target_shared"])
+        else:
+            alignment = (1 - F.cosine_similarity(state["source_shared"], state["target_shared"])).mean()
         if not self.config.source_enabled:
             alignment = alignment * 0
         separation = orthogonality_loss(state["shared"], state["private"])
         if self.config.source_enabled:
             separation = separation + orthogonality_loss(state["private"], state["source_private"])
+        lsep = state["shared"].new_tensor(0.0)
+        if self.config.sp_injector_enabled and self.config.lsep_weight > 0:
+            lsep = source_private_separation_loss(state["private"], state["source_sp_signal"])
+        proto_orth = state["shared"].new_tensor(0.0)
+        if self.config.prototype_enabled and self.config.proto_orth_weight > 0:
+            proto = state["proto"]
+            proto_orth = orthogonality_loss(proto["proto_shared"][1:], proto["proto_target"][1:])
         total = generation + retrieval_loss + self.config.cpf_weight * cpf
         total = total + self.config.alignment_weight * alignment + self.config.separation_weight * separation
+        total = total + self.config.lsep_weight * lsep + self.config.proto_orth_weight * proto_orth
         return {"total": total, "generation": generation, "retrieval": retrieval_loss,
-                "cpf": cpf, "alignment": alignment, "separation": separation}
+                "cpf": cpf, "alignment": alignment, "separation": separation,
+                "lsep": lsep, "proto_orth": proto_orth}
 
     def sequence_scores(self, prefix, item_ids):
         tokens = self.tokens[item_ids]
@@ -151,7 +206,7 @@ class TextSIRCDR(nn.Module):
         mode = mode or self.config.inference_mode
         items = self.item_states()
         state = self.encode(batch, items)
-        base = F.normalize(items[0], dim=-1)
+        base = F.normalize(items["base"], dim=-1)
         if mode == "generate":
             return constrained_generate(self.decoder, state["prefix"], self.trie,
                 beam_size=self.config.beam_size, top_k=top_k, seen_items=seen,

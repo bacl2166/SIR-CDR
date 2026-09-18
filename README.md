@@ -61,11 +61,22 @@ Use `--skip-download` when all four raw gzip files already exist, and use `--for
 - `cdr_framework/datasets/`: Amazon/Douban-compatible interaction and metadata schemas plus chronological leave-one-out splitting.
 - `cdr_framework/embeddings/`: text/image/LLM provider boundaries, deterministic offline embeddings, filesystem cache, and reserved Qwen/DeepSeek API providers.
 - `cdr_framework/graphs/`: transition graph construction and seven-dimensional edge confidence features.
-- `cdr_framework/modules.py`: multimodal projection, confidence-aware graph propagation, shared/specific disentanglement, structural injection, and gated latent reasoning.
+- `cdr_framework/modules.py`: multimodal projection, confidence-aware graph propagation, shared/specific disentanglement (user and prototype sides), cross-domain/specific structural injectors, codebook-summary pooling, and gated latent reasoning.
 - `cdr_framework/tokenization/`: domain-adaptive semantic tokenizer, semantic codebook, beam search, and item-token lookup.
 - `cdr_framework/modules_cpf.py`: context prediction feedback head and its prediction/alignment/anti-collapse objectives.
 - `cdr_framework/metrics.py`: HR@K, NDCG@K, MRR@K, catalog coverage, and token lookup hit rate.
 - `cdr_framework/framework.py`: runnable end-to-end synthetic baseline that preserves the existing model path.
+
+The active text-only model (`cdr_framework/text_model.py`) implements the dual
+structural injection stage on top of the v2 pipeline: item-side prototype
+disentanglement (shared/source-specific/target-specific prototypes from the
+sparse graph outputs), CrossDomain/SpecificDomain structural injectors that
+feed the shared and private latent paths of the gated reasoner, and a
+codebook-summary prefix. Regularizers are contrastive shared alignment,
+prototype orthogonality, and source-private separation. Every new component is
+controlled by a config switch, so `v2_legacy` reproduces the previous
+single-gate wiring and the new ablations (`no_proto`, `no_cd_inj`, `no_sp_inj`,
+`no_lsep`, `no_lsh`, `no_csum`) isolate each contribution.
 
 The intended data flow is:
 
@@ -74,9 +85,12 @@ interactions + metadata
   -> cached multimodal embeddings
   -> source/target/cross-domain graphs
   -> shared and domain-specific structural representations
+  -> prototype-side shared/specific item tokens
   -> domain-adaptive semantic tokens
+  -> cross-domain/specific structural injectors
   -> gated latent reasoning
   -> CPF training feedback
+  -> dual structural fusion prefix (with codebook summary)
   -> autoregressive token generation and item lookup
 ```
 

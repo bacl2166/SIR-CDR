@@ -17,6 +17,36 @@ ID supervision; full-target retrieval loss; retrieval, hybrid, exhaustive
 generation-scored ranking and catalog-constrained generation; early stopping,
 learning-rate scheduling, resume, ablations and multi-seed validation summaries.
 
+## Dual structural injection stage
+
+On top of the v2 pipeline the active model wires the item-side prototype
+disentanglement and the two structural injectors of the framework design:
+
+- `TextPrototypeDisentangler` derives a shared prototype from the cross-domain
+  bridge graph and source/target-specific prototypes from their own domain
+  graphs, then fuses each prototype with the base semantic and graph signal into
+  graph-enhanced shared/source/target item tokens.
+- `CrossDomainStructuralInjector` attention-pools the shared item tokens and
+  cross-domain graph representations over the user's source and target
+  histories and feeds the result only into the shared latent head.
+- `SpecificDomainStructuralInjector` mean-pools the domain-specific item tokens
+  and domain graph representations; the target signal feeds the private latent
+  head while the source signal is kept as the reference for the separation
+  regularizer and is never injected into a head.
+- `CodebookSummaryPool` attention-pools the codebook centroid embeddings
+  conditioned on the combined latent demand, replacing the CPF prediction as
+  the fifth prefix input.
+- Regularizers: contrastive shared alignment (`shared_alignment_loss`),
+  prototype orthogonality (shared vs target-specific prototypes), and
+  source-private separation (`source_private_separation_loss`).
+
+Every new component is a config switch, so the previous single-gate wiring is
+reproduced exactly by `v2_legacy` and each contribution is isolated by the
+`no_proto`, `no_cd_inj`, `no_sp_inj`, `no_lsep`, `no_lsh` and `no_csum`
+variants. Known limits: injectors do not mask padded history rows (consistent
+with the legacy protocol); graph-enhanced tokens are computed for the whole
+catalog once per forward and stay sparse in the graph stage.
+
 This is a local neural recommender, not an LLM decoder fine-tuning experiment.
 It implements the project's module roles, not a verified reproduction of
 GenCDR, AGCLR or LT-Tuning. Metrics on remote real data remain to be measured.
@@ -151,7 +181,7 @@ completed weights. Exact ties prefer the smaller generation weight.
 ## Ablation suite
 
 ```bash
-python -u experiments/run_text_cdr.py --action suite --variants full no_graph no_reasoning single_step no_feedback no_semantic no_cpf_loss target_only --seeds 42 43 44 --device cuda
+python -u experiments/run_text_cdr.py --action suite --variants full no_graph no_reasoning single_step no_feedback no_semantic no_cpf_loss target_only no_proto no_cd_inj no_sp_inj no_lsep no_lsh no_csum v2_legacy --seeds 42 43 44 --device cuda
 python experiments/summarize_text_cdr.py --root artifacts/text_cdr/qwen3_8b/sports_to_clothing
 ```
 

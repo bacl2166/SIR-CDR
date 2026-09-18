@@ -108,6 +108,70 @@ class PrototypeDisentangler(nn.Module):
         return torch.tanh(self.shared(base)), torch.tanh(self.source_specific(base)), torch.tanh(self.target_specific(base))
 
 
+class TextPrototypeDisentangler(nn.Module):
+    """Item-side prototype disentanglement over sparse graph outputs (v2 text path).
+
+    Each prototype is derived from its own structural source: the shared
+    prototype from the cross-domain bridge graph and the domain-specific
+    prototypes from their own domain graphs. The outputs are both the
+    prototype vectors used for alignment/orthogonality losses and the
+    graph-enhanced shared/specific item tokens consumed by the structural
+    injectors.
+    """
+
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.base = nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim), nn.ReLU(), nn.LayerNorm(hidden_dim))
+        self.shared = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh())
+        self.source_specific = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh())
+        self.target_specific = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh())
+        self.token_shared = nn.Linear(hidden_dim * 3, hidden_dim)
+        self.token_source = nn.Linear(hidden_dim * 3, hidden_dim)
+        self.token_target = nn.Linear(hidden_dim * 3, hidden_dim)
+
+    def forward(
+        self,
+        semantic: torch.Tensor,
+        graph_shared: torch.Tensor,
+        graph_source: torch.Tensor,
+        graph_target: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        shared = self.shared(self.base(torch.cat([semantic, graph_shared], dim=-1)))
+        source = self.source_specific(self.base(torch.cat([semantic, graph_source], dim=-1)))
+        target = self.target_specific(self.base(torch.cat([semantic, graph_target], dim=-1)))
+        tokens_shared = torch.tanh(self.token_shared(torch.cat([semantic, graph_shared, shared], dim=-1)))
+        tokens_source = torch.tanh(self.token_source(torch.cat([semantic, graph_source, source], dim=-1)))
+        tokens_target = torch.tanh(self.token_target(torch.cat([semantic, graph_target, target], dim=-1)))
+        return {
+            "proto_shared": shared,
+            "proto_source": source,
+            "proto_target": target,
+            "tokens_shared": tokens_shared,
+            "tokens_source": tokens_source,
+            "tokens_target": tokens_target,
+        }
+
+
+class CodebookSummaryPool(nn.Module):
+    """Attention pooling over codebook centroid embeddings (latent-to-prototype).
+
+    Produces the codebook summary c_bar of the design prefix
+    ``P_u = PrefixProj([z_sh; z_T,sp; s_cd; s_T,sp; c_bar])``, conditioning on
+    the combined latent demand.
+    """
+
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.key = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.query = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.value = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+    def forward(self, latent: torch.Tensor, centroids: torch.Tensor) -> torch.Tensor:
+        scores = self.query(latent) @ self.key(centroids).t() / (centroids.shape[-1] ** 0.5)
+        weights = torch.softmax(scores, dim=-1)
+        return weights @ self.value(centroids)
+
+
 class UserDisentangler(nn.Module):
     def __init__(self, hidden_dim: int):
         super().__init__()

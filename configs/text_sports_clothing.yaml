@@ -34,4 +34,11 @@ text_recommendation:
   reasoning_enabled: true
   semantic_enabled: true
   source_enabled: true
+  prototype_enabled: true
+  cd_injector_enabled: true
+  sp_injector_enabled: true
+  codebook_summary_enabled: true
+  contrastive_alignment: true
+  lsep_weight: 0.01
+  proto_orth_weight: 0.01
   seed: 42
