@@ -95,5 +95,17 @@ class CheckpointIdentityTests(unittest.TestCase):
             self.assertEqual(getattr(runtime, "fusion_norm", "none"), "softmax")
 
 
+    def test_label_smoothing_parses_and_stays_out_of_signature_payload(self):
+        from cdr_framework.formal_training import _config_payload
+        from cdr_framework.text_config import TextCDRConfig
+
+        base = TextCDRConfig()
+        self.assertAlmostEqual(base.label_smoothing, 0.0)
+        self.assertNotIn("label_smoothing", _config_payload(base))
+        tuned = TextCDRConfig.from_yaml(str(ROOT / "configs/text_sports_clothing_l3a.yaml"))
+        self.assertAlmostEqual(tuned.label_smoothing, 0.1)
+        self.assertNotIn("label_smoothing", _config_payload(tuned))
+
+
 if __name__ == "__main__":
     unittest.main()

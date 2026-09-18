@@ -26,6 +26,7 @@ class TextCDRConfig(RecommendationTrainingConfig):
     separation_weight: float = 0.01
     generation_weight: float = 1.0
     retrieval_weight: float = 1.0
+    label_smoothing: float = 0.0  # generation CE label smoothing (de-biases overconfidence / popularity collapse)
     source_enabled: bool = True
     inference_mode: str = "hybrid"
     beam_size: int = 50

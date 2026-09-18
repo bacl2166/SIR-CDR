@@ -200,7 +200,8 @@ def train(config, device, *, max_epochs_this_run=None):
     result = {"identity": identity, "epochs_completed": epochs_done, "best_validation": best_validation,
               "complete": epochs_done >= config.max_epochs or stale >= config.patience,
               "protocol": "per-user leave-one-out; training-only static graph; full-history seen exclusion",
-              "inference_mode": config.inference_mode}
+              "inference_mode": config.inference_mode,
+              "label_smoothing": config.label_smoothing}
     if result["complete"]:
         _write_json(completed, result)
     return result

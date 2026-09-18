@@ -165,7 +165,8 @@ class TextSIRCDR(nn.Module):
         bos = torch.full((len(tokens), 1), self.decoder.bos_id, dtype=torch.long, device=tokens.device)
         expected = torch.cat([tokens, torch.full_like(bos, self.decoder.eos_id)], 1)
         logits = self.decoder(state["prefix"], torch.cat([bos, tokens], 1))
-        generation = F.cross_entropy(logits.flatten(0, 1), expected.flatten())
+        generation = F.cross_entropy(logits.flatten(0, 1), expected.flatten(),
+                                     label_smoothing=self.config.label_smoothing)
         # Stable text target, detached so the auxiliary objective cannot move its own target.
         positive = base[batch.positive_items].detach()
         cpf = torch.stack([1 - F.cosine_similarity(p, positive).mean() for p in state["predictions"]]).mean()
