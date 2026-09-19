@@ -11,7 +11,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cdr_framework.text_training import verify_checkpoint_identity  # noqa: E402
+from cdr_framework.text_training import evaluation_identity, verify_checkpoint_identity  # noqa: E402
 
 
 def _sig(**overrides):
@@ -26,6 +26,34 @@ def _sig(**overrides):
 
 
 class CheckpointIdentityTests(unittest.TestCase):
+    def test_evaluation_identity_tracks_every_runtime_ranking_setting(self):
+        from dataclasses import replace
+        from cdr_framework.text_config import TextCDRConfig
+
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = Path(directory) / "best_model.pt"
+            checkpoint.write_bytes(b"checkpoint")
+            config = TextCDRConfig(
+                rerank_candidates=321,
+                retrieval_temperature=0.25,
+                retrieval_score_weight=2.0,
+                generation_score_weight=0.5,
+                fusion_normalization="log_softmax",
+                evaluation_batch_size=7,
+            )
+            identity = evaluation_identity(config, checkpoint, "validation", "hybrid")
+            for key in (
+                "checkpoint_sha256", "split", "mode", "rerank_candidates",
+                "retrieval_temperature", "retrieval_score_weight",
+                "generation_score_weight", "fusion_normalization", "evaluation_batch_size",
+            ):
+                self.assertIn(key, identity)
+            changed = evaluation_identity(
+                replace(config, generation_score_weight=1.5), checkpoint, "validation", "hybrid"
+            )
+            self.assertNotEqual(identity, changed)
+            self.assertEqual(checkpoint.read_bytes(), b"checkpoint")
+
     def test_text_config_validates_explicit_loss_score_and_calibration_fields(self):
         from cdr_framework.text_config import TextCDRConfig
 

@@ -18,6 +18,7 @@ from cdr_framework.text_config import TextCDRConfig  # noqa: E402
 from cdr_framework.text_training import (  # noqa: E402
     VARIANTS,
     build_model,
+    evaluation_identity,
     evaluate,
     load_rows,
     signature,
@@ -65,7 +66,7 @@ def sweep(
 
     identity = {
         "training_identity": training_identity,
-        "checkpoint_sha256": _sha256(checkpoint_path),
+        "evaluation_identity": evaluation_identity(runtime_base, checkpoint_path, "validation", "hybrid"),
         "script_sha256": _sha256(Path(__file__)),
         "split": "validation",
         "mode": "hybrid",

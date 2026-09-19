@@ -12,7 +12,7 @@ from cdr_framework.text_training import VARIANTS, variant_config, train, evaluat
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Text-only SIR-CDR v2 training, ablation and full-target evaluation")
+    parser = argparse.ArgumentParser(description="Text-only SIR-CDR v4 training, ablation and full-target evaluation")
     parser.add_argument("--config", default=str(ROOT / "configs/text_sports_clothing.yaml"))
     parser.add_argument("--action", choices=("train", "evaluate", "suite"), default="train")
     parser.add_argument("--device", default="cuda")

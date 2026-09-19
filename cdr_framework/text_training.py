@@ -74,6 +74,24 @@ def verify_checkpoint_identity(checkpoint, config, require_code=True):
     return True, ("code mismatch allowed (inference-only)" if code_drift else "ok")
 
 
+def evaluation_identity(config, checkpoint_path, split, mode):
+    """Describe the exact checkpoint and runtime ranking policy used for metrics."""
+    checkpoint_path = Path(checkpoint_path)
+    return {
+        "checkpoint_sha256": _sha256(checkpoint_path),
+        "split": split,
+        "mode": mode or config.inference_mode,
+        "rerank_candidates": config.rerank_candidates,
+        "retrieval_temperature": config.retrieval_temperature,
+        "retrieval_score_weight": config.retrieval_score_weight,
+        "generation_score_weight": config.generation_score_weight,
+        "fusion_normalization": config.fusion_normalization,
+        "evaluation_batch_size": config.evaluation_batch_size,
+        "decode_chunk_size": config.decode_chunk_size,
+        "beam_size": config.beam_size,
+    }
+
+
 def build_model(config, device):
     catalog = load_fixed_catalog(config)
     if not torch.isfinite(catalog.item_latents).all() or not torch.isfinite(catalog.codebooks).all():
@@ -216,8 +234,10 @@ def evaluate_checkpoint(config, device, split="validation", mode=None, code_chec
         raise RuntimeError(f"Evaluation checkpoint {why}")
     model, catalog = build_model(config, device)
     model.load_state_dict(checkpoint["model"])
+    checkpoint_path = config.output_dir / "best_model.pt"
     result = {"epoch": checkpoint["epoch"], "split": split, "mode": mode or config.inference_mode,
-              "checkpoint_sha256": _sha256(config.output_dir / "best_model.pt"),
+              "checkpoint_sha256": _sha256(checkpoint_path),
+              "evaluation_identity": evaluation_identity(config, checkpoint_path, split, mode),
               "metrics": evaluate(model, load_rows(config, catalog, split), config, device, mode)}
     _write_json(config.output_dir / f"{split}_{mode or config.inference_mode}.json", result)
     return result
