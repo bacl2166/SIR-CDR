@@ -24,6 +24,7 @@ from cdr_framework.losses import (
 )
 from cdr_framework.text_graph import SparseDualGraphEncoder
 from cdr_framework.catalog_generation import CatalogTrie, constrained_generate
+from cdr_framework.ops import calibrate_scores
 
 
 class TextSIRCDR(nn.Module):
@@ -243,14 +244,10 @@ class TextSIRCDR(nn.Module):
                 stop = start + self.config.decode_chunk_size
                 gen[start:stop] = self.sequence_scores(state["prefix"][batch_rows[start:stop]], flat_ids[start:stop])
             eligible = torch.isfinite(values)
-            if getattr(self.config, "fusion_norm", "none") == "softmax":
-                # Normalize both score families to probability scale before mixing
-                # (retrieval cosine/temperature vs decoder log-probabilities have
-                # incompatible magnitudes; softmax keeps the blend well-conditioned).
-                values = torch.softmax(values, dim=-1)
-                gen = torch.softmax(gen, dim=-1)
+            values = calibrate_scores(values, eligible, self.config.fusion_normalization)
+            gen = calibrate_scores(gen.reshape_as(values), eligible, self.config.fusion_normalization)
             values = (self.config.retrieval_score_weight * values
-                      + self.config.generation_score_weight * gen.reshape_as(values))
+                      + self.config.generation_score_weight * gen)
             values = values.masked_fill(~eligible, -torch.inf)
         ranked_scores, order = values.topk(min(top_k, count), 1)
         ranked = candidates.gather(1, order).masked_fill(~torch.isfinite(ranked_scores), 0)

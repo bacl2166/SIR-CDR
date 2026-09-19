@@ -13,7 +13,7 @@ from cdr_framework.modules import (
     GatedSignalFusion,
     SpecificDomainStructuralInjector,
 )
-from cdr_framework.ops import sequence_mean
+from cdr_framework.ops import calibrate_scores, sequence_mean
 from cdr_framework.text_config import TextCDRConfig
 from cdr_framework.text_data import collate_text_rows, load_text_rows
 from cdr_framework.text_training import build_model, variant_config, VARIANTS
@@ -47,6 +47,26 @@ def fixture(root):
 
 
 class TextStructuralInjectionTests(unittest.TestCase):
+    def test_score_calibration_preserves_masks_and_handles_singletons(self):
+        scores = torch.tensor([[2.0, 4.0, 100.0], [7.0, -3.0, 9.0]])
+        eligible = torch.tensor([[True, True, False], [True, False, False]])
+        none = calibrate_scores(scores, eligible, "none")
+        torch.testing.assert_close(none[0, :2], scores[0, :2])
+        self.assertTrue(torch.isneginf(none[~eligible]).all())
+
+        logged = calibrate_scores(scores, eligible, "log_softmax")
+        torch.testing.assert_close(logged[0, :2].exp().sum(), torch.tensor(1.0))
+        torch.testing.assert_close(logged[1, 0], torch.tensor(0.0))
+        self.assertTrue(torch.isneginf(logged[~eligible]).all())
+
+        standardized = calibrate_scores(scores, eligible, "zscore")
+        torch.testing.assert_close(standardized[0, :2], torch.tensor([-1.0, 1.0]), atol=1e-5, rtol=1e-5)
+        torch.testing.assert_close(standardized[1, 0], torch.tensor(0.0))
+        self.assertTrue(torch.isfinite(standardized[eligible]).all())
+        self.assertTrue(torch.isneginf(standardized[~eligible]).all())
+        with self.assertRaises(ValueError):
+            calibrate_scores(scores, eligible, "softmax")
+
     def test_forward_uses_explicit_training_loss_weights(self):
         with tempfile.TemporaryDirectory() as directory:
             config = replace(

@@ -26,6 +26,37 @@ def sequence_mean(
     return (gathered * mask).sum(dim=1) / lengths.to(gathered).unsqueeze(1)
 
 
+def calibrate_scores(
+    scores: torch.Tensor,
+    eligible: torch.Tensor,
+    mode: str,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Calibrate candidate scores per user without reviving masked items."""
+    if scores.shape != eligible.shape:
+        raise ValueError("scores and eligible must have identical shapes")
+    if mode not in {"none", "log_softmax", "zscore"}:
+        raise ValueError("Unknown score calibration mode")
+    eligible = eligible.bool()
+    if mode == "none":
+        calibrated = scores
+    elif mode == "log_softmax":
+        masked = scores.masked_fill(~eligible, -torch.inf)
+        empty = ~eligible.any(dim=1)
+        if empty.any():
+            masked = masked.clone()
+            masked[empty] = 0
+        calibrated = F.log_softmax(masked, dim=1)
+    else:
+        count = eligible.sum(dim=1, keepdim=True).clamp_min(1).to(scores.dtype)
+        finite = scores.masked_fill(~eligible, 0)
+        mean = finite.sum(dim=1, keepdim=True) / count
+        centered = (scores - mean).masked_fill(~eligible, 0)
+        variance = centered.square().sum(dim=1, keepdim=True) / count
+        calibrated = centered / torch.sqrt(variance + eps)
+    return calibrated.masked_fill(~eligible, -torch.inf)
+
+
 def cosine_tie_score(query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
     query = query.reshape(1, -1)
     return F.cosine_similarity(query, candidates, dim=-1)
