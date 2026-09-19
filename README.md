@@ -1,6 +1,6 @@
 # SIR-CDR: Text-only Cross-domain Recommendation
 
-The active v2 pipeline combines cached text embeddings, sparse shared/private graphs,
+The active v4 pipeline combines cached text embeddings, sparse shared/private graphs,
 gated latent reasoning, context prediction feedback (CPF), and Semantic ID generation.
 It accepts no image or multimodal inputs and learns no raw item-ID embeddings.
 Legacy synthetic and v1 modules remain available only for reproducing earlier runs.
@@ -13,7 +13,7 @@ data preparation, model internals, training calls and evaluation, see the
 [complete code and experiment guide](docs/complete_code_guide_zh.md).
 
 ```bash
-python experiments/run_text_cdr.py --config configs/text_sports_clothing.yaml --action train --variant full --seeds 42 --device cuda
+python experiments/run_text_cdr.py --config configs/text_sports_clothing_v4_p0.yaml --action train --variant full --seeds 42 --device cuda
 ```
 
 This uses a separate output directory and requires new embedding, tokenizer and
@@ -98,7 +98,7 @@ interactions + metadata
 
 External embedding calls are disabled by default. `EmbeddingConfig(enable_api_calls=False)` selects the deterministic local provider, so tests and synthetic experiments do not require network access or credentials.
 
-The active v2 configuration uses the official local `Qwen/Qwen3-Embedding-8B`
+The active text configuration uses the official local `Qwen/Qwen3-Embedding-8B`
 weights in BF16 and exports normalized 768-dimensional MRL vectors. Set
 `QWEN3_EMBEDDING_MODEL_PATH` to a downloaded model directory; if it is unset,
 Sentence Transformers downloads the public Hugging Face model. The legacy
@@ -171,15 +171,30 @@ python experiments/evaluate_recommender.py \
   --split test
 ```
 
-For the text-only v2 model, tune retrieval/generation fusion on validation
+For the text-only v4 model, tune retrieval/generation fusion on validation
 without retraining or touching test data:
 
 ```bash
 python experiments/sweep_text_fusion.py \
-  --config configs/text_sports_clothing.yaml \
+  --config configs/text_sports_clothing_v4_p0.yaml \
   --variant full --seed 42 --device cuda \
-  --weights 0 0.1 0.25 0.5 1 2
+  --weights 0 0.1 0.25 0.5 1 2 \
+  --fusion-norm log_softmax
 ```
+
+After selecting the score weight on validation, update only the score fields in
+the v4 YAML and run the held-out test exactly once:
+
+```bash
+python experiments/run_text_cdr.py \
+  --config configs/text_sports_clothing_v4_p0.yaml \
+  --action evaluate --variant full --seeds 42 \
+  --split test --mode hybrid --device cuda
+```
+
+The v4 model changes learned parameter wiring and checkpoint identity. A v3
+`best_model.pt` cannot be evaluated with v4 code and must not be copied into
+`artifacts/text_cdr_v4/`; train a new v4 checkpoint in that isolated output root.
 
 ## Verify
 

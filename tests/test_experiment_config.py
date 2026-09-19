@@ -137,6 +137,24 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
         self.assertEqual(config.selection_metric, "HR@10")
         self.assertIn("text_cdr_v3_l4e", str(config.output_dir))
 
+    def test_v4_p0_config_uses_isolated_output_and_explicit_scoring(self):
+        from cdr_framework.text_config import TextCDRConfig
+
+        repo_root = Path(__file__).resolve().parents[1]
+        path = repo_root / "configs" / "text_sports_clothing_v4_p0.yaml"
+        self.assertTrue(path.exists(), f"missing {path}")
+        config = TextCDRConfig.from_yaml(path)
+        self.assertIn("text_cdr_v4", str(config.output_dir))
+        self.assertEqual(config.selection_metric, "NDCG@10")
+        self.assertEqual(config.retrieval_loss_weight, 1.0)
+        self.assertEqual(config.generation_loss_weight, 1.0)
+        self.assertEqual(config.retrieval_score_weight, 1.0)
+        self.assertEqual(config.generation_score_weight, 1.0)
+        self.assertEqual(config.fusion_normalization, "log_softmax")
+        self.assertTrue(config.prototype_enabled)
+        self.assertTrue(config.cd_injector_enabled)
+        self.assertTrue(config.sp_injector_enabled)
+
 
 if __name__ == "__main__":
     unittest.main()
