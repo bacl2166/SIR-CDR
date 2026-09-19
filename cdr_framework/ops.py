@@ -4,9 +4,26 @@ import torch
 import torch.nn.functional as F
 
 
-def sequence_mean(embeddings: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+def sequence_mask(lengths: torch.Tensor, max_length: int) -> torch.Tensor:
+    if lengths.ndim != 1:
+        raise ValueError("lengths must be one-dimensional")
+    if max_length < 1:
+        raise ValueError("max_length must be positive")
+    if (lengths < 1).any() or (lengths > max_length).any():
+        raise ValueError("lengths must be within the padded sequence width")
+    return torch.arange(max_length, device=lengths.device).unsqueeze(0) < lengths.unsqueeze(1)
+
+
+def sequence_mean(
+    embeddings: torch.Tensor,
+    indices: torch.Tensor,
+    lengths: torch.Tensor | None = None,
+) -> torch.Tensor:
     gathered = embeddings[indices]
-    return gathered.mean(dim=1)
+    if lengths is None:
+        return gathered.mean(dim=1)
+    mask = sequence_mask(lengths.to(indices.device), indices.shape[1]).unsqueeze(-1)
+    return (gathered * mask).sum(dim=1) / lengths.to(gathered).unsqueeze(1)
 
 
 def cosine_tie_score(query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:

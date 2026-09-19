@@ -113,6 +113,7 @@ class TextSIRCDR(nn.Module):
             shared_tokens = proto["tokens_shared"] if proto is not None else base
             cd_signal = self.cd_injector(
                 shared_tokens, graph_shared, batch.source_items, batch.target_items,
+                batch.source_lengths, batch.target_lengths,
                 user_shared=shared_signal,
             )
         else:
@@ -123,6 +124,7 @@ class TextSIRCDR(nn.Module):
             source_sp_signal, target_sp_signal = self.sp_injector(
                 source_tokens, graph_source, target_tokens, graph_target,
                 batch.source_items, batch.target_items,
+                batch.source_lengths, batch.target_lengths,
             )
         else:
             source_sp_signal, target_sp_signal = source_private, target_private

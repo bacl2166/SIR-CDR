@@ -5,7 +5,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from cdr_framework.data import GraphBatch
-from cdr_framework.ops import build_symmetric_adjacency, sequence_mean
+from cdr_framework.ops import build_symmetric_adjacency, sequence_mask, sequence_mean
 
 
 class MultimodalSemanticEncoder(nn.Module):
@@ -196,14 +196,25 @@ class CrossDomainStructuralInjector(nn.Module):
         cd_graph_repr: torch.Tensor,
         source_history: torch.Tensor,
         target_history: torch.Tensor,
+        source_lengths: torch.Tensor | None = None,
+        target_lengths: torch.Tensor | None = None,
+        *,
         user_shared: torch.Tensor | None = None,
     ) -> torch.Tensor:
         history = torch.cat([source_history, target_history], dim=1).long()
         values = self.value(torch.cat([shared_tokens, cd_graph_repr], dim=-1))
         gathered = values[history]
+        if source_lengths is None or target_lengths is None:
+            mask = torch.ones(history.shape, dtype=torch.bool, device=history.device)
+        else:
+            mask = torch.cat([
+                sequence_mask(source_lengths.to(history.device), source_history.shape[1]),
+                sequence_mask(target_lengths.to(history.device), target_history.shape[1]),
+            ], dim=1)
         if user_shared is None:
-            user_shared = gathered.mean(dim=1)
+            user_shared = (gathered * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1, keepdim=True)
         scores = (self.key(gathered) * self.query(user_shared).unsqueeze(1)).sum(dim=-1) / values.shape[-1] ** 0.5
+        scores = scores.masked_fill(~mask, -torch.inf)
         weights = torch.softmax(scores, dim=1).unsqueeze(-1)
         return (weights * gathered).sum(dim=1)
 
@@ -222,10 +233,15 @@ class SpecificDomainStructuralInjector(nn.Module):
         target_graph_repr: torch.Tensor,
         source_history: torch.Tensor,
         target_history: torch.Tensor,
+        source_lengths: torch.Tensor | None = None,
+        target_lengths: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         source_values = self.source_value(torch.cat([source_tokens, source_graph_repr], dim=-1))
         target_values = self.target_value(torch.cat([target_tokens, target_graph_repr], dim=-1))
-        return sequence_mean(source_values, source_history.long()), sequence_mean(target_values, target_history.long())
+        return (
+            sequence_mean(source_values, source_history.long(), source_lengths),
+            sequence_mean(target_values, target_history.long(), target_lengths),
+        )
 
 
 class UserImplicitReasoner(nn.Module):

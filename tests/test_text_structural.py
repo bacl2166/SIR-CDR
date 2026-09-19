@@ -8,6 +8,8 @@ from dataclasses import replace
 
 import torch
 
+from cdr_framework.modules import CrossDomainStructuralInjector, SpecificDomainStructuralInjector
+from cdr_framework.ops import sequence_mean
 from cdr_framework.text_config import TextCDRConfig
 from cdr_framework.text_data import collate_text_rows, load_text_rows
 from cdr_framework.text_training import build_model, variant_config, VARIANTS
@@ -41,6 +43,53 @@ def fixture(root):
 
 
 class TextStructuralInjectionTests(unittest.TestCase):
+    def test_sequence_mean_ignores_right_padding_and_validates_lengths(self):
+        embeddings = torch.arange(24, dtype=torch.float32).reshape(6, 4)
+        short = torch.tensor([[1, 2]])
+        padded = torch.tensor([[1, 2, 0, 0]])
+        expected = sequence_mean(embeddings, short, torch.tensor([2]))
+        actual = sequence_mean(embeddings, padded, torch.tensor([2]))
+        torch.testing.assert_close(actual, expected)
+        for lengths in (torch.tensor([0]), torch.tensor([5])):
+            with self.assertRaises(ValueError):
+                sequence_mean(embeddings, padded, lengths)
+
+    def test_structural_injectors_are_invariant_to_right_padding(self):
+        torch.manual_seed(7)
+        hidden = 4
+        shared_tokens = torch.randn(8, hidden)
+        source_tokens = torch.randn(8, hidden)
+        target_tokens = torch.randn(8, hidden)
+        shared_graph = torch.randn(8, hidden)
+        source_graph = torch.randn(8, hidden)
+        target_graph = torch.randn(8, hidden)
+        user_shared = torch.randn(1, hidden)
+        source_short = torch.tensor([[1, 2]])
+        target_short = torch.tensor([[4, 5]])
+        source_padded = torch.tensor([[1, 2, 0, 0]])
+        target_padded = torch.tensor([[4, 5, 0]])
+        source_lengths = torch.tensor([2])
+        target_lengths = torch.tensor([2])
+
+        cd = CrossDomainStructuralInjector(hidden).eval()
+        short_cd = cd(shared_tokens, shared_graph, source_short, target_short,
+                      source_lengths, target_lengths, user_shared=user_shared)
+        padded_cd = cd(shared_tokens, shared_graph, source_padded, target_padded,
+                       source_lengths, target_lengths, user_shared=user_shared)
+        torch.testing.assert_close(padded_cd, short_cd)
+
+        sp = SpecificDomainStructuralInjector(hidden).eval()
+        short_source, short_target = sp(
+            source_tokens, source_graph, target_tokens, target_graph,
+            source_short, target_short, source_lengths, target_lengths,
+        )
+        padded_source, padded_target = sp(
+            source_tokens, source_graph, target_tokens, target_graph,
+            source_padded, target_padded, source_lengths, target_lengths,
+        )
+        torch.testing.assert_close(padded_source, short_source)
+        torch.testing.assert_close(padded_target, short_target)
+
     def test_new_architecture_forward_backward_activates_all_modules(self):
         with tempfile.TemporaryDirectory() as directory:
             config = fixture(Path(directory))
