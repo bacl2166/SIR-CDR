@@ -13,6 +13,7 @@ from cdr_framework.modules import (
     CodebookSummaryPool,
     CrossDomainStructuralInjector,
     SpecificDomainStructuralInjector,
+    GatedSignalFusion,
 )
 from cdr_framework.modules_cpf import ContextPredictionFeedback
 from cdr_framework.losses import (
@@ -52,6 +53,8 @@ class TextSIRCDR(nn.Module):
         self.prototype = TextPrototypeDisentangler(h)
         self.cd_injector = CrossDomainStructuralInjector(h)
         self.sp_injector = SpecificDomainStructuralInjector(h)
+        self.source_private_fusion = GatedSignalFusion(h)
+        self.target_private_fusion = GatedSignalFusion(h)
         self.codebook_summary = CodebookSummaryPool(h)
         self.structural_gate = nn.Linear(3 * h, h)
         self.source_gru, self.target_gru = nn.GRU(h, h, batch_first=True), nn.GRU(h, h, batch_first=True)
@@ -105,7 +108,8 @@ class TextSIRCDR(nn.Module):
         if not self.config.source_enabled:
             source = torch.zeros_like(source)
         source_shared, target_shared = torch.tanh(self.shared_head(source)), torch.tanh(self.shared_head(target))
-        source_private, target_private = torch.tanh(self.source_head(source)), torch.tanh(self.target_head(target))
+        source_private_sequence = torch.tanh(self.source_head(source))
+        target_private_sequence = torch.tanh(self.target_head(target))
         transfer = torch.sigmoid(self.transfer_gate(torch.cat([source, target], -1)))
         shared_signal = transfer * source_shared + (1 - transfer) * target_shared
         context = target + transfer * source
@@ -126,16 +130,19 @@ class TextSIRCDR(nn.Module):
                 batch.source_items, batch.target_items,
                 batch.source_lengths, batch.target_lengths,
             )
+            source_private = self.source_private_fusion(source_private_sequence, source_sp_signal)
+            target_private = self.target_private_fusion(target_private_sequence, target_sp_signal)
         else:
-            source_sp_signal, target_sp_signal = source_private, target_private
+            source_sp_signal, target_sp_signal = source_private_sequence, target_private_sequence
+            source_private, target_private = source_private_sequence, target_private_sequence
         feedback_losses = []
         states = []
         rounds = self.config.feedback_steps if self.config.reasoning_enabled else 1
         for round_index in range(rounds):
             if self.config.reasoning_enabled:
-                shared, private, reasoning = self.reasoner(context, cd_signal, target_sp_signal)
+                shared, private, reasoning = self.reasoner(context, cd_signal, target_private)
             else:
-                shared, private = shared_signal, target_sp_signal
+                shared, private = shared_signal, target_private
                 reasoning = (shared + private)[:, None]
             prediction = self.cpf.predictor(torch.cat([shared + private, context], -1))
             feedback_losses.append(prediction)
@@ -148,11 +155,12 @@ class TextSIRCDR(nn.Module):
             summary = self.codebook_summary(shared + private, self.centroids)
         else:
             summary = prediction
-        prefix = self.prefix_head(shared, private, cd_signal, target_sp_signal, summary)
+        prefix = self.prefix_head(shared, private, cd_signal, target_private, summary)
         return dict(query=query, prefix=prefix, shared=shared, private=private,
                     source_private=source_private, source_shared=source_shared, target_shared=target_shared,
                     context=context, states=torch.cat(states, 1), predictions=feedback_losses,
-                    source_sp_signal=source_sp_signal, proto=proto)
+                    source_sp_signal=source_sp_signal, target_sp_signal=target_sp_signal,
+                    target_private=target_private, proto=proto)
 
     def forward(self, batch):
         items = self.item_states()
@@ -185,7 +193,7 @@ class TextSIRCDR(nn.Module):
             separation = separation + orthogonality_loss(state["private"], state["source_private"])
         lsep = state["shared"].new_tensor(0.0)
         if self.config.sp_injector_enabled and self.config.lsep_weight > 0:
-            lsep = source_private_separation_loss(state["private"], state["source_sp_signal"])
+            lsep = source_private_separation_loss(state["private"], state["source_private"])
         proto_orth = state["shared"].new_tensor(0.0)
         if self.config.prototype_enabled and self.config.proto_orth_weight > 0:
             proto = state["proto"]

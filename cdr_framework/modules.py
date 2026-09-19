@@ -244,6 +244,21 @@ class SpecificDomainStructuralInjector(nn.Module):
         )
 
 
+class GatedSignalFusion(nn.Module):
+    """Blend sequential and structural views while keeping both trainable."""
+
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        self.gate = nn.Linear(hidden_dim * 2, hidden_dim)
+        self.norm = nn.LayerNorm(hidden_dim)
+
+    def forward(self, sequential: torch.Tensor, structural: torch.Tensor) -> torch.Tensor:
+        if sequential.shape != structural.shape:
+            raise ValueError("Fusion inputs must have identical shapes")
+        gate = torch.sigmoid(self.gate(torch.cat([sequential, structural], dim=-1)))
+        return self.norm(gate * sequential + (1 - gate) * structural)
+
+
 class UserImplicitReasoner(nn.Module):
     def __init__(self, hidden_dim: int, reasoning_steps: int = 3):
         super().__init__()

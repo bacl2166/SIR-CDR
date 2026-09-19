@@ -8,7 +8,11 @@ from dataclasses import replace
 
 import torch
 
-from cdr_framework.modules import CrossDomainStructuralInjector, SpecificDomainStructuralInjector
+from cdr_framework.modules import (
+    CrossDomainStructuralInjector,
+    GatedSignalFusion,
+    SpecificDomainStructuralInjector,
+)
 from cdr_framework.ops import sequence_mean
 from cdr_framework.text_config import TextCDRConfig
 from cdr_framework.text_data import collate_text_rows, load_text_rows
@@ -43,6 +47,19 @@ def fixture(root):
 
 
 class TextStructuralInjectionTests(unittest.TestCase):
+    def test_gated_signal_fusion_propagates_both_inputs(self):
+        torch.manual_seed(11)
+        fusion = GatedSignalFusion(4)
+        sequential = torch.randn(3, 4, requires_grad=True)
+        structural = torch.randn(3, 4, requires_grad=True)
+        output = fusion(sequential, structural)
+        self.assertEqual(output.shape, sequential.shape)
+        self.assertTrue(torch.isfinite(output).all())
+        output.square().sum().backward()
+        self.assertGreater(sequential.grad.abs().sum().item(), 0)
+        self.assertGreater(structural.grad.abs().sum().item(), 0)
+        self.assertTrue(all(parameter.grad is not None for parameter in fusion.parameters()))
+
     def test_sequence_mean_ignores_right_padding_and_validates_lengths(self):
         embeddings = torch.arange(24, dtype=torch.float32).reshape(6, 4)
         short = torch.tensor([[1, 2]])
@@ -105,6 +122,10 @@ class TextStructuralInjectionTests(unittest.TestCase):
             self.assertGreater(losses["lsep"].item(), 0)
             self.assertGreater(losses["proto_orth"].item(), 0)
             for module in (model.prototype, model.cd_injector, model.sp_injector, model.codebook_summary):
+                self.assertTrue(any(p.grad is not None and p.grad.abs().sum() > 0 for p in module.parameters()),
+                                type(module).__name__)
+            for module in (model.source_head, model.target_head,
+                           model.source_private_fusion, model.target_private_fusion):
                 self.assertTrue(any(p.grad is not None and p.grad.abs().sum() > 0 for p in module.parameters()),
                                 type(module).__name__)
 
