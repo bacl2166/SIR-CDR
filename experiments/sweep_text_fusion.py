@@ -28,7 +28,7 @@ from cdr_framework.text_training import (  # noqa: E402
 
 def best_result(results: list[dict[str, float]]) -> dict[str, float]:
     """Select on validation NDCG@10 and prefer less generation on exact ties."""
-    return max(results, key=lambda row: (row["NDCG@10"], -row["generation_weight"]))
+    return max(results, key=lambda row: (row["NDCG@10"], -row["generation_score_weight"]))
 
 
 @torch.no_grad()
@@ -39,7 +39,7 @@ def sweep(
     weights=(0.0, 0.1, 0.25, 0.5, 1.0, 2.0),
     batch_size: int = 16,
     rerank_candidates: int | None = None,
-    fusion_norm: str = "none",
+    fusion_normalization: str = "none",
     allow_code_mismatch: bool = False,
     temperature: float | None = None,
 ) -> dict[str, object]:
@@ -61,11 +61,7 @@ def sweep(
         runtime_base = replace(runtime_base, rerank_candidates=rerank_candidates)
     if temperature is not None:
         runtime_base = replace(runtime_base, retrieval_temperature=temperature)
-    if fusion_norm != "none":
-        # Inference-only dynamic attribute: NOT a dataclass field, so it stays out of
-        # asdict()/signature and old checkpoints remain compatible. The config is a
-        # frozen dataclass, so use object.__setattr__ for this runtime injection.
-        object.__setattr__(runtime_base, "fusion_norm", fusion_norm)
+    runtime_base = replace(runtime_base, fusion_normalization=fusion_normalization)
 
     identity = {
         "training_identity": training_identity,
@@ -77,9 +73,9 @@ def sweep(
         "rerank_candidates": runtime_base.rerank_candidates,
         "retrieval_temperature": runtime_base.retrieval_temperature,
         "allow_code_mismatch": allow_code_mismatch,
-        "fusion_norm": getattr(runtime_base, "fusion_norm", "none"),
-        "retrieval_weight": runtime_base.retrieval_weight,
-        "generation_weights": weights,
+        "fusion_normalization": runtime_base.fusion_normalization,
+        "retrieval_score_weight": runtime_base.retrieval_score_weight,
+        "generation_score_weights": weights,
         "evaluation_batch_size": batch_size,
         "best_epoch": checkpoint["epoch"],
         "device": str(device),
@@ -101,21 +97,17 @@ def sweep(
         raise ValueError("Validation split is empty.")
 
     results = report["results"]
-    done = {row["generation_weight"] for row in results}
+    done = {row["generation_score_weight"] for row in results}
     for weight in weights:
         if weight in done:
             print(f"Reusing completed weight: {weight:g}", flush=True)
             continue
-        runtime = replace(runtime_base, generation_weight=weight)
-        if fusion_norm != "none":
-            # dataclasses.replace drops dynamic attributes; re-inject so the
-            # runtime normalization actually reaches rank().
-            object.__setattr__(runtime, "fusion_norm", fusion_norm)
+        runtime = replace(runtime_base, generation_score_weight=weight)
         model.config = runtime
         metrics = evaluate(model, rows, runtime, device, mode="hybrid")
         result = {
-            "generation_weight": weight,
-            "retrieval_weight": runtime.retrieval_weight,
+            "generation_score_weight": weight,
+            "retrieval_score_weight": runtime.retrieval_score_weight,
             "rerank_candidates": runtime.rerank_candidates,
             **metrics,
         }
@@ -146,7 +138,7 @@ def main() -> None:
                         help="Override config.output_dir before variant suffix (same as run_text_cdr.py).")
     parser.add_argument("--rerank-candidates", type=int, default=None,
                         help="Override rerank_candidates at evaluation time (training signature unchanged).")
-    parser.add_argument("--fusion-norm", choices=("none", "softmax"), default="none",
+    parser.add_argument("--fusion-norm", choices=("none", "log_softmax", "zscore"), default="none",
                         help="Normalize retrieval/generation scores before fusion (runtime only, no retrain).")
     parser.add_argument("--allow-code-mismatch", action="store_true",
                         help="Inference-only: accept newer code while config/artifacts are still verified; recorded in report.")
@@ -167,7 +159,7 @@ def main() -> None:
         config = replace(config, output_dir=args.output_root.resolve())
     config = variant_config(config, args.variant, args.seed)
     sweep(config, torch.device(args.device), weights=args.weights, batch_size=args.batch_size,
-          rerank_candidates=args.rerank_candidates, fusion_norm=args.fusion_norm,
+          rerank_candidates=args.rerank_candidates, fusion_normalization=args.fusion_norm,
           allow_code_mismatch=args.allow_code_mismatch, temperature=args.temperature)
 
 

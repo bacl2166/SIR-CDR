@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -15,7 +16,7 @@ from cdr_framework.text_training import verify_checkpoint_identity  # noqa: E402
 
 def _sig(**overrides):
     sig = {
-        "version": "text-cdr-v3",
+        "version": "text-cdr-v4",
         "config": {"hidden_dim": 128},
         "artifacts": {"train": "abc"},
         "code": {"text_model.py": "hash1"},
@@ -25,6 +26,48 @@ def _sig(**overrides):
 
 
 class CheckpointIdentityTests(unittest.TestCase):
+    def test_text_config_validates_explicit_loss_score_and_calibration_fields(self):
+        from cdr_framework.text_config import TextCDRConfig
+
+        config = TextCDRConfig(
+            retrieval_loss_weight=0.5,
+            generation_loss_weight=2.0,
+            retrieval_score_weight=1.5,
+            generation_score_weight=0.25,
+            fusion_normalization="zscore",
+        )
+        self.assertEqual(config.retrieval_loss_weight, 0.5)
+        self.assertEqual(config.generation_score_weight, 0.25)
+        for kwargs in (
+            {"retrieval_loss_weight": 0.0, "generation_loss_weight": 0.0},
+            {"retrieval_score_weight": 0.0, "generation_score_weight": 0.0},
+            {"retrieval_loss_weight": float("nan")},
+            {"fusion_normalization": "softmax"},
+        ):
+            with self.assertRaises(ValueError):
+                TextCDRConfig(**kwargs)
+
+    def test_legacy_yaml_weights_migrate_to_score_weights_and_conflicts_fail(self):
+        from cdr_framework.text_config import TextCDRConfig
+
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = Path(directory) / "legacy.yaml"
+            legacy.write_text(
+                "text_recommendation:\n  retrieval_weight: 2.0\n  generation_weight: 0.5\n",
+                encoding="utf-8",
+            )
+            config = TextCDRConfig.from_yaml(legacy)
+            self.assertEqual(config.retrieval_score_weight, 2.0)
+            self.assertEqual(config.generation_score_weight, 0.5)
+            self.assertEqual(config.retrieval_loss_weight, 1.0)
+            conflict = Path(directory) / "conflict.yaml"
+            conflict.write_text(
+                "text_recommendation:\n  retrieval_weight: 2.0\n  retrieval_score_weight: 1.0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                TextCDRConfig.from_yaml(conflict)
+
     def test_accepts_matching_identity(self):
         with mock.patch("cdr_framework.text_training.signature", return_value=_sig()):
             ok, why = verify_checkpoint_identity({"identity": _sig()}, object())
@@ -67,32 +110,27 @@ class CheckpointIdentityTests(unittest.TestCase):
         self.assertIn("missing", why)
 
 
-    def test_runtime_fusion_norm_injection_stays_out_of_signature(self):
+    def test_fusion_normalization_is_an_explicit_config_field(self):
         from dataclasses import asdict, replace
 
         from cdr_framework.text_config import TextCDRConfig
 
         base = TextCDRConfig.from_yaml(str(ROOT / "configs/text_sports_clothing.yaml"))
-        runtime = replace(base, evaluation_batch_size=16)
-        object.__setattr__(runtime, "fusion_norm", "softmax")
-        self.assertEqual(getattr(runtime, "fusion_norm", "none"), "softmax")
-        self.assertNotIn("fusion_norm", asdict(runtime))
-        self.assertNotIn("fusion_norm", asdict(base))
+        runtime = replace(base, evaluation_batch_size=16, fusion_normalization="log_softmax")
+        self.assertEqual(runtime.fusion_normalization, "log_softmax")
+        self.assertIn("fusion_normalization", asdict(runtime))
 
 
-    def test_fusion_norm_reinjected_after_replace_loop(self):
+    def test_fusion_normalization_survives_replace_loop(self):
         from dataclasses import replace
 
         from cdr_framework.text_config import TextCDRConfig
 
         base = TextCDRConfig.from_yaml(str(ROOT / "configs/text_sports_clothing.yaml"))
-        runtime_base = replace(base, evaluation_batch_size=16)
-        object.__setattr__(runtime_base, "fusion_norm", "softmax")
+        runtime_base = replace(base, evaluation_batch_size=16, fusion_normalization="zscore")
         for weight in (0.5, 1.0):
-            runtime = replace(runtime_base, generation_weight=weight)
-            if getattr(runtime_base, "fusion_norm", "none") != "none":
-                object.__setattr__(runtime, "fusion_norm", getattr(runtime_base, "fusion_norm", "none"))
-            self.assertEqual(getattr(runtime, "fusion_norm", "none"), "softmax")
+            runtime = replace(runtime_base, generation_score_weight=weight)
+            self.assertEqual(runtime.fusion_normalization, "zscore")
 
 
     def test_label_smoothing_parses_and_stays_out_of_signature_payload(self):

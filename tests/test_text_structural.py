@@ -47,6 +47,28 @@ def fixture(root):
 
 
 class TextStructuralInjectionTests(unittest.TestCase):
+    def test_forward_uses_explicit_training_loss_weights(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = replace(
+                fixture(Path(directory)),
+                dropout=0.0,
+                retrieval_loss_weight=0.0,
+                generation_loss_weight=2.0,
+            )
+            model, catalog = build_model(config, torch.device("cpu"))
+            batch, _ = collate_text_rows(load_text_rows(
+                config.processed_dir / "train.jsonl", config.max_sequence_length,
+                len(catalog.item_latents), catalog.target_item_ids))
+            losses = model(batch)
+            auxiliary = (
+                config.cpf_weight * losses["cpf"]
+                + config.alignment_weight * losses["alignment"]
+                + config.separation_weight * losses["separation"]
+                + config.lsep_weight * losses["lsep"]
+                + config.proto_orth_weight * losses["proto_orth"]
+            )
+            torch.testing.assert_close(losses["total"], 2.0 * losses["generation"] + auxiliary)
+
     def test_gated_signal_fusion_propagates_both_inputs(self):
         torch.manual_seed(11)
         fusion = GatedSignalFusion(4)

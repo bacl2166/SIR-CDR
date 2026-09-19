@@ -24,8 +24,11 @@ class TextCDRConfig(RecommendationTrainingConfig):
     cpf_weight: float = 0.1
     alignment_weight: float = 0.02
     separation_weight: float = 0.01
-    generation_weight: float = 1.0
-    retrieval_weight: float = 1.0
+    retrieval_loss_weight: float = 1.0
+    generation_loss_weight: float = 1.0
+    retrieval_score_weight: float = 1.0
+    generation_score_weight: float = 1.0
+    fusion_normalization: str = "none"
     label_smoothing: float = 0.0  # generation CE label smoothing (de-biases overconfidence / popularity collapse)
     source_enabled: bool = True
     inference_mode: str = "hybrid"
@@ -54,12 +57,18 @@ class TextCDRConfig(RecommendationTrainingConfig):
                 raise ValueError(f"{name} must be positive")
         if not 0 <= self.dropout < 1:
             raise ValueError("dropout must be in [0, 1)")
-        for name in ("cpf_weight", "alignment_weight", "separation_weight", "generation_weight",
-                     "retrieval_weight", "lsep_weight", "proto_orth_weight"):
+        for name in ("cpf_weight", "alignment_weight", "separation_weight",
+                     "retrieval_loss_weight", "generation_loss_weight",
+                     "retrieval_score_weight", "generation_score_weight",
+                     "lsep_weight", "proto_orth_weight"):
             if not math.isfinite(getattr(self, name)) or getattr(self, name) < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
-        if self.generation_weight + self.retrieval_weight <= 0:
-            raise ValueError("At least one ranking weight must be positive")
+        if self.generation_loss_weight + self.retrieval_loss_weight <= 0:
+            raise ValueError("At least one training loss weight must be positive")
+        if self.generation_score_weight + self.retrieval_score_weight <= 0:
+            raise ValueError("At least one ranking score weight must be positive")
+        if self.fusion_normalization not in {"none", "log_softmax", "zscore"}:
+            raise ValueError("Unknown fusion_normalization")
         if self.inference_mode not in {"retrieval", "hybrid", "exhaustive", "generate"}:
             raise ValueError("Unknown inference_mode")
         if self.selection_metric not in {f"{metric}@{k}" for metric in ("HR", "NDCG", "MRR") for k in self.top_ks}:
@@ -70,4 +79,13 @@ class TextCDRConfig(RecommendationTrainingConfig):
         payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         if "text_recommendation" not in payload:
             raise ValueError("Expected text_recommendation section, not legacy recommendation")
-        return cls(**payload["text_recommendation"])
+        values = dict(payload["text_recommendation"])
+        for legacy, replacement in (
+            ("retrieval_weight", "retrieval_score_weight"),
+            ("generation_weight", "generation_score_weight"),
+        ):
+            if legacy in values and replacement in values:
+                raise ValueError(f"Define only {replacement}; {legacy} is a legacy alias")
+            if legacy in values:
+                values[replacement] = values.pop(legacy)
+        return cls(**values)

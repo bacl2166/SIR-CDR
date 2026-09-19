@@ -59,9 +59,9 @@ def fixture(root: Path) -> TextCDRConfig:
 class TextFusionSweepTests(unittest.TestCase):
     def test_selection_uses_ndcg_and_prefers_smaller_weight_on_ties(self):
         rows = [
-            {"generation_weight": 0.5, "NDCG@10": 0.2, "HR@10": 0.3},
-            {"generation_weight": 1.0, "NDCG@10": 0.2, "HR@10": 0.8},
-            {"generation_weight": 2.0, "NDCG@10": 0.1, "HR@10": 0.9},
+            {"generation_score_weight": 0.5, "NDCG@10": 0.2, "HR@10": 0.3},
+            {"generation_score_weight": 1.0, "NDCG@10": 0.2, "HR@10": 0.8},
+            {"generation_score_weight": 2.0, "NDCG@10": 0.1, "HR@10": 0.9},
         ]
         self.assertEqual(best_result(rows), rows[0])
 

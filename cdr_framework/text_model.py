@@ -198,7 +198,9 @@ class TextSIRCDR(nn.Module):
         if self.config.prototype_enabled and self.config.proto_orth_weight > 0:
             proto = state["proto"]
             proto_orth = orthogonality_loss(proto["proto_shared"][1:], proto["proto_target"][1:])
-        total = generation + retrieval_loss + self.config.cpf_weight * cpf
+        total = (self.config.generation_loss_weight * generation
+                 + self.config.retrieval_loss_weight * retrieval_loss
+                 + self.config.cpf_weight * cpf)
         total = total + self.config.alignment_weight * alignment + self.config.separation_weight * separation
         total = total + self.config.lsep_weight * lsep + self.config.proto_orth_weight * proto_orth
         return {"total": total, "generation": generation, "retrieval": retrieval_loss,
@@ -233,7 +235,7 @@ class TextSIRCDR(nn.Module):
             count = len(self.target_ids)
         values, indices = scores.topk(count, dim=1)
         candidates = self.target_ids[indices]
-        if mode != "retrieval" and self.config.generation_weight > 0:
+        if mode != "retrieval" and self.config.generation_score_weight > 0:
             batch_rows = torch.arange(len(scores), device=scores.device).repeat_interleave(count)
             flat_ids = candidates.flatten()
             gen = torch.empty(len(flat_ids), device=scores.device)
@@ -247,7 +249,8 @@ class TextSIRCDR(nn.Module):
                 # incompatible magnitudes; softmax keeps the blend well-conditioned).
                 values = torch.softmax(values, dim=-1)
                 gen = torch.softmax(gen, dim=-1)
-            values = self.config.retrieval_weight * values + self.config.generation_weight * gen.reshape_as(values)
+            values = (self.config.retrieval_score_weight * values
+                      + self.config.generation_score_weight * gen.reshape_as(values))
             values = values.masked_fill(~eligible, -torch.inf)
         ranked_scores, order = values.topk(min(top_k, count), 1)
         ranked = candidates.gather(1, order).masked_fill(~torch.isfinite(ranked_scores), 0)
