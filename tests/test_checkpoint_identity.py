@@ -26,6 +26,31 @@ def _sig(**overrides):
 
 
 class CheckpointIdentityTests(unittest.TestCase):
+    def test_text_signature_hashes_shared_tensor_operations(self):
+        from cdr_framework.text_config import TextCDRConfig
+        from cdr_framework import text_training
+
+        with mock.patch.object(text_training, "_artifact_fingerprints", return_value={}):
+            identity = text_training.signature(TextCDRConfig())
+        self.assertIn("ops.py", identity["code"])
+
+    def test_checkpoint_training_payload_excludes_runtime_scoring_but_keeps_loss_weights(self):
+        from dataclasses import replace
+        from cdr_framework.text_config import TextCDRConfig
+        from cdr_framework.text_training import _training_config_payload
+
+        base = TextCDRConfig()
+        runtime = replace(
+            base,
+            generation_score_weight=2.0,
+            fusion_normalization="zscore",
+            rerank_candidates=1000,
+            evaluation_batch_size=3,
+        )
+        self.assertEqual(_training_config_payload(base), _training_config_payload(runtime))
+        changed_loss = replace(base, generation_loss_weight=2.0)
+        self.assertNotEqual(_training_config_payload(base), _training_config_payload(changed_loss))
+
     def test_evaluation_identity_tracks_every_runtime_ranking_setting(self):
         from dataclasses import replace
         from cdr_framework.text_config import TextCDRConfig

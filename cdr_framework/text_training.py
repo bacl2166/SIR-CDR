@@ -21,6 +21,30 @@ VARIANTS = ("full", "no_graph", "no_reasoning", "single_step", "no_feedback", "n
             "target_only", "no_proto", "no_cd_inj", "no_sp_inj", "no_lsep", "no_lsh", "no_csum", "v2_legacy")
 
 
+RUNTIME_RANKING_FIELDS = (
+    "evaluation_batch_size",
+    "inference_mode",
+    "beam_size",
+    "decode_chunk_size",
+    "rerank_candidates",
+    "retrieval_score_weight",
+    "generation_score_weight",
+    "fusion_normalization",
+)
+
+
+def _training_config_payload(config):
+    payload = _config_payload(config)
+    for name in RUNTIME_RANKING_FIELDS:
+        payload.pop(name, None)
+    return payload
+
+
+def _selection_policy_payload(config):
+    payload = _config_payload(config)
+    return {name: payload[name] for name in RUNTIME_RANKING_FIELDS if name in payload}
+
+
 def variant_config(config, variant, seed):
     if variant not in VARIANTS:
         raise ValueError("Unknown variant")
@@ -48,18 +72,20 @@ def variant_config(config, variant, seed):
 
 def signature(config):
     files = ["text_config.py", "text_data.py", "text_model.py", "text_graph.py", "catalog_generation.py", "text_training.py",
-             "formal_recommendation.py", "modules.py", "modules_cpf.py", "losses.py"]
-    return {"version": VERSION, "config": _config_payload(config), "artifacts": _artifact_fingerprints(config),
+             "formal_recommendation.py", "modules.py", "modules_cpf.py", "losses.py", "ops.py"]
+    return {"version": VERSION, "config": _training_config_payload(config),
+            "selection_policy": _selection_policy_payload(config),
+            "artifacts": _artifact_fingerprints(config),
             "code": {name: _sha256(Path(__file__).parent / name) for name in files}}
 
 
 def verify_checkpoint_identity(checkpoint, config, require_code=True):
     """Layered checkpoint identity check.
 
-    version/config/artifacts always must match the stored training identity; the
+    version/training-config/artifacts always must match the stored training identity; the
     code fingerprint may drift for inference-only tooling (explicit opt-in, the
-    drift is recorded in the report for audit). The data/config layers can never
-    be disabled.
+    drift is recorded in the report for audit). Runtime ranking settings are
+    recorded as selection/evaluation policy and may change after validation tuning.
     """
     stored = checkpoint.get("identity") if isinstance(checkpoint, dict) else None
     if not isinstance(stored, dict):
