@@ -24,7 +24,7 @@ from cdr_framework.experiment_config import AmazonPreprocessingConfig  # noqa: E
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Prepare leakage-free Amazon Sports-to-Clothing artifacts."
+        description="Prepare leakage-free Amazon artifacts for a configured GenCDR domain pair."
     )
     parser.add_argument("--config", required=True, help="Path to the experiment YAML file.")
     parser.add_argument(
@@ -86,6 +86,8 @@ def run(config: AmazonPreprocessingConfig, *, skip_download: bool, force: bool) 
         iter_amazon_records(target_files.reviews),
         iter_amazon_records(source_files.metadata),
         iter_amazon_records(target_files.metadata),
+        source_domain=config.source_domain,
+        target_domain=config.target_domain,
         min_interactions=config.min_interactions_per_domain,
         max_text_chars=config.max_text_chars,
     )

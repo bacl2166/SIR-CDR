@@ -213,6 +213,24 @@ stops without starting any training when an input is missing or invalid.
 python experiments/run_gencdr_benchmarks.py --action preflight
 ```
 
+If the preflight reports missing pair assets, prepare every missing stage with
+one resumable command. Completed pairs and completed stages are validated and
+skipped. Raw Amazon 2014 gzip files are downloaded only when they are absent;
+Qwen embedding batches and tokenizer epochs resume from their managed outputs.
+
+```bash
+mkdir -p logs
+nohup python -u experiments/prepare_gencdr_assets.py \
+  --pairs phones_to_electronics books_to_movies --device cuda \
+  > logs/prepare_gencdr_assets.log 2>&1 &
+echo $! > logs/prepare_gencdr_assets.pid
+```
+
+The exact Amazon categories are `Cell_Phones_and_Accessories -> Electronics`
+and `Books -> Movies_and_TV`. The script uses the same chronological,
+per-user leave-two-out protocol and Qwen3-Embedding-8B tokenizer settings as
+the existing Sports-to-Clothing run. After it finishes, rerun the preflight.
+
 Run the three seed-42 jobs sequentially on one GPU. Training is resumable. After
 each checkpoint is complete, the runner tunes score fusion on validation for
 `none`, `log_softmax`, and `zscore`, then evaluates the held-out test split once.

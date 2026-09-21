@@ -6,6 +6,13 @@ from pathlib import Path
 import yaml
 
 
+GENCDR_AMAZON_DOMAIN_PAIRS = (
+    ("Sports_and_Outdoors", "Clothing_Shoes_and_Jewelry"),
+    ("Cell_Phones_and_Accessories", "Electronics"),
+    ("Books", "Movies_and_TV"),
+)
+
+
 @dataclass(frozen=True)
 class AmazonPreprocessingConfig:
     source_domain: str = "Sports_and_Outdoors"
@@ -20,10 +27,9 @@ class AmazonPreprocessingConfig:
         object.__setattr__(self, "raw_dir", Path(self.raw_dir))
         object.__setattr__(self, "processed_dir", Path(self.processed_dir))
 
-        if self.source_domain != "Sports_and_Outdoors":
-            raise ValueError("source_domain must be Sports_and_Outdoors.")
-        if self.target_domain != "Clothing_Shoes_and_Jewelry":
-            raise ValueError("target_domain must be Clothing_Shoes_and_Jewelry.")
+        if (self.source_domain, self.target_domain) not in GENCDR_AMAZON_DOMAIN_PAIRS:
+            supported = ", ".join(f"{source}->{target}" for source, target in GENCDR_AMAZON_DOMAIN_PAIRS)
+            raise ValueError(f"Unsupported GenCDR Amazon domain pair; expected one of: {supported}.")
         if self.min_interactions_per_domain < 3:
             raise ValueError("min_interactions_per_domain must be at least 3.")
         if self.max_text_chars <= 0:

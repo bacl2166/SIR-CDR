@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Generate resumable Qwen API or local Qwen3-Embedding-8B item vectors."
     )
     parser.add_argument("--config", required=True, help="Path to the experiment YAML file.")
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Override the configured local embedding device, such as cuda or cpu.",
+    )
     parser.add_argument(
         "--smoke-test",
         action="store_true",
@@ -97,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = QwenEmbeddingConfig.from_yaml(args.config)
+        if args.device is not None:
+            config = replace(config, device=args.device)
         return run(config, smoke_test=args.smoke_test, force=args.force)
     except Exception as error:
         print(f"Embedding failed: {error}", file=sys.stderr)

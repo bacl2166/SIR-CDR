@@ -54,7 +54,7 @@ BENCHMARKS = {
         Path("configs/text_books_movies_v4_p0.yaml"),
         Path("data/processed/books_to_movies"),
         Path("artifacts/tokenizer/qwen3_8b/books_to_movies"),
-        "Movies",
+        "Movies_and_TV",
     ),
 }
 
@@ -314,7 +314,10 @@ def main() -> None:
     args = parser.parse_args()
     if args.evaluation_batch_size < 1:
         parser.error("--evaluation-batch-size must be positive")
-    run(args)
+    try:
+        run(args)
+    except AssetPreflightError as error:
+        parser.exit(2, f"{error}\n")
 
 
 if __name__ == "__main__":

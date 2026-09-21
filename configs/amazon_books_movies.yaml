@@ -1,0 +1,61 @@
+dataset:
+  source_domain: Books
+  target_domain: Movies_and_TV
+  raw_dir: data/raw/amazon2014
+  processed_dir: data/processed/books_to_movies
+  min_interactions_per_domain: 5
+  max_text_chars: 12000
+  seed: 42
+
+embedding:
+  provider: qwen3_local
+  model: Qwen/Qwen3-Embedding-8B
+  dimension: 768
+  batch_size: 1
+  max_retries: 5
+  retry_initial_seconds: 2.0
+  input_path: data/processed/books_to_movies/item_texts.jsonl
+  output_dir: artifacts/embeddings/qwen3_8b/books_to_movies
+  device: cuda
+  max_sequence_length: 8192
+  model_path_env: QWEN3_EMBEDDING_MODEL_PATH
+
+tokenizer:
+  embeddings_path: artifacts/embeddings/qwen3_8b/books_to_movies/text_embeddings.pt
+  item_texts_path: data/processed/books_to_movies/item_texts.jsonl
+  output_dir: artifacts/tokenizer/qwen3_8b/books_to_movies
+  input_dim: 768
+  hidden_dim: 128
+  codebook_size: 512
+  token_length: 4
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  max_epochs: 100
+  domain_loss_weight: 0.1
+  gate_balance_weight: 0.01
+  kmeans_iterations: 20
+  max_collision_rate: 0.10
+  min_level_utilization: 0.10
+  seed: 42
+
+recommendation:
+  processed_dir: data/processed/books_to_movies
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/books_to_movies
+  output_dir: artifacts/recommendation/qwen3_8b/books_to_movies
+  hidden_dim: 128
+  reasoning_steps: 3
+  prefix_length: 4
+  max_sequence_length: 50
+  batch_size: 256
+  evaluation_batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  max_epochs: 100
+  evaluation_every: 5
+  patience: 5
+  retrieval_temperature: 0.1
+  top_ks: [5, 10, 20]
+  candidate_chunk_size: 2048
+  rerank_candidates: 200
+  seed: 42

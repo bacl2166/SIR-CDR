@@ -26,7 +26,7 @@ class _TextExtractor(HTMLParser):
         self.parts.append(data)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AmazonEvent:
     user_id: str
     asin: str
@@ -36,6 +36,8 @@ class AmazonEvent:
 
 @dataclass(frozen=True)
 class PreparedDomainPair:
+    source_domain: str
+    target_domain: str
     user_to_id: dict[str, int]
     item_to_id: dict[str, int]
     id_to_item: list[dict[str, str] | None]
@@ -45,7 +47,7 @@ class PreparedDomainPair:
     statistics: dict[str, int]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecommendationSample:
     user_id: int
     source_items: tuple[int, ...]
@@ -172,19 +174,40 @@ def _group(events: Iterable[AmazonEvent]) -> dict[str, tuple[AmazonEvent, ...]]:
     }
 
 
+def _retain_events_with_text(
+    events: list[AmazonEvent], texts: Mapping[str, str]
+) -> tuple[list[AmazonEvent], int]:
+    write_index = 0
+    for event in events:
+        if event.asin in texts:
+            events[write_index] = event
+            write_index += 1
+    missing = len(events) - write_index
+    del events[write_index:]
+    return events, missing
+
+
 def prepare_domain_pair(
     source_reviews: Iterable[Mapping[str, Any]],
     target_reviews: Iterable[Mapping[str, Any]],
     source_metadata: Iterable[Mapping[str, Any]],
     target_metadata: Iterable[Mapping[str, Any]],
+    *,
+    source_domain: str = SOURCE_DOMAIN,
+    target_domain: str = TARGET_DOMAIN,
     min_interactions: int = 5,
     max_text_chars: int = 12000,
 ) -> PreparedDomainPair:
     if min_interactions < 3:
         raise ValueError("min_interactions must be at least 3")
 
-    raw_source, rejected_source = _read_events(source_reviews, SOURCE_DOMAIN)
-    raw_target, rejected_target = _read_events(target_reviews, TARGET_DOMAIN)
+    if not source_domain or not target_domain or source_domain == target_domain:
+        raise ValueError("source_domain and target_domain must be distinct non-empty names")
+
+    raw_source, rejected_source = _read_events(source_reviews, source_domain)
+    raw_target, rejected_target = _read_events(target_reviews, target_domain)
+    raw_source_count = len(raw_source)
+    raw_target_count = len(raw_target)
     source_text = _metadata_texts(
         source_metadata, {event.asin for event in raw_source}, max_text_chars
     )
@@ -192,8 +215,8 @@ def prepare_domain_pair(
         target_metadata, {event.asin for event in raw_target}, max_text_chars
     )
 
-    valid_source = [event for event in raw_source if event.asin in source_text]
-    valid_target = [event for event in raw_target if event.asin in target_text]
+    valid_source, missing_source = _retain_events_with_text(raw_source, source_text)
+    valid_target, missing_target = _retain_events_with_text(raw_target, target_text)
     source_by_user = _group(valid_source)
     target_by_user = _group(valid_target)
     retained_users = sorted(
@@ -212,8 +235,8 @@ def prepare_domain_pair(
     id_to_item: list[dict[str, str] | None] = [None]
     item_texts: dict[int, str] = {}
     for domain, asins, texts in (
-        (SOURCE_DOMAIN, source_asins, source_text),
-        (TARGET_DOMAIN, target_asins, target_text),
+        (source_domain, source_asins, source_text),
+        (target_domain, target_asins, target_text),
     ):
         for asin in asins:
             item_id = len(id_to_item)
@@ -222,12 +245,12 @@ def prepare_domain_pair(
             item_texts[item_id] = texts[asin]
 
     statistics = {
-        "raw_source_interactions": len(raw_source),
-        "raw_target_interactions": len(raw_target),
+        "raw_source_interactions": raw_source_count,
+        "raw_target_interactions": raw_target_count,
         "rejected_source_records": rejected_source,
         "rejected_target_records": rejected_target,
-        "missing_text_source_interactions": len(raw_source) - len(valid_source),
-        "missing_text_target_interactions": len(raw_target) - len(valid_target),
+        "missing_text_source_interactions": missing_source,
+        "missing_text_target_interactions": missing_target,
         "retained_users": len(retained_users),
         "retained_source_items": len(source_asins),
         "retained_target_items": len(target_asins),
@@ -235,6 +258,8 @@ def prepare_domain_pair(
         "retained_target_interactions": sum(map(len, target_events.values())),
     }
     return PreparedDomainPair(
+        source_domain=source_domain,
+        target_domain=target_domain,
         user_to_id={user: index for index, user in enumerate(retained_users)},
         item_to_id=item_to_id,
         id_to_item=id_to_item,
@@ -252,12 +277,12 @@ def _sample_for(
 ) -> RecommendationSample | None:
     label = prepared.target_events[user][target_index]
     source = tuple(
-        prepared.item_to_id[f"{SOURCE_DOMAIN}:{event.asin}"]
+        prepared.item_to_id[f"{prepared.source_domain}:{event.asin}"]
         for event in prepared.source_events[user]
         if event.timestamp < label.timestamp
     )
     target = tuple(
-        prepared.item_to_id[f"{TARGET_DOMAIN}:{event.asin}"]
+        prepared.item_to_id[f"{prepared.target_domain}:{event.asin}"]
         for event in prepared.target_events[user][:target_index]
     )
     if not source or not target:
@@ -266,7 +291,7 @@ def _sample_for(
         user_id=prepared.user_to_id[user],
         source_items=source,
         target_items=target,
-        positive_target_item=prepared.item_to_id[f"{TARGET_DOMAIN}:{label.asin}"],
+        positive_target_item=prepared.item_to_id[f"{prepared.target_domain}:{label.asin}"],
         timestamp=label.timestamp,
     )
 
@@ -320,14 +345,18 @@ def write_preprocessed_artifacts(
     samples: TemporalSamples,
     output_dir: str | Path,
     *,
-    source_domain: str = SOURCE_DOMAIN,
-    target_domain: str = TARGET_DOMAIN,
+    source_domain: str | None = None,
+    target_domain: str | None = None,
     min_interactions: int = 5,
     max_text_chars: int = 12000,
     seed: int = 42,
     raw_files: Mapping[str, str | Path] | None = None,
     force: bool = False,
 ) -> Path:
+    source_domain = source_domain or prepared.source_domain
+    target_domain = target_domain or prepared.target_domain
+    if (source_domain, target_domain) != (prepared.source_domain, prepared.target_domain):
+        raise ValueError("Artifact domain names must match the prepared domain pair")
     output = Path(output_dir)
     if (output / "manifest.json").exists() and not force:
         raise FileExistsError(f"Processed output already exists: {output}")

@@ -28,6 +28,27 @@ def metadata(asin, title=None, **fields):
 
 
 class AmazonPreprocessingTests(unittest.TestCase):
+    def test_custom_domains_are_used_in_events_mappings_and_samples(self):
+        prepared = prepare_domain_pair(
+            [review("u1", f"P{i}", i) for i in range(1, 4)],
+            [review("u1", f"E{i}", i + 10) for i in range(1, 4)],
+            [metadata(f"P{i}", f"Phone {i}") for i in range(1, 4)],
+            [metadata(f"E{i}", f"Electronic {i}") for i in range(1, 4)],
+            source_domain="Cell_Phones_and_Accessories",
+            target_domain="Electronics",
+            min_interactions=3,
+        )
+
+        self.assertEqual(prepared.source_domain, "Cell_Phones_and_Accessories")
+        self.assertEqual(prepared.target_domain, "Electronics")
+        self.assertIn("Cell_Phones_and_Accessories:P1", prepared.item_to_id)
+        self.assertIn("Electronics:E3", prepared.item_to_id)
+        splits = build_temporal_splits(prepared)
+        self.assertEqual(
+            splits.test[0].positive_target_item,
+            prepared.item_to_id["Electronics:E3"],
+        )
+
     def test_build_product_text_cleans_and_orders_allowed_fields(self):
         record = metadata(
             "RAW-ID",
@@ -117,6 +138,8 @@ class AmazonPreprocessingTests(unittest.TestCase):
         self.assertTrue(prepared.item_texts[1].startswith("Title: Source one"))
         self.assertNotIn("reviewText", prepared.item_texts[1])
         self.assertEqual(prepared.statistics["retained_users"], 1)
+        self.assertEqual(prepared.statistics["raw_source_interactions"], 9)
+        self.assertEqual(prepared.statistics["missing_text_source_interactions"], 1)
         self.assertEqual(prepared.statistics["retained_source_interactions"], 3)
         self.assertEqual(prepared.statistics["retained_target_interactions"], 3)
 

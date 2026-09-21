@@ -11,6 +11,28 @@ from cdr_framework.experiment_config import (
 
 
 class AmazonPreprocessingConfigTests(unittest.TestCase):
+    def test_repository_configs_cover_all_three_benchmark_pairs(self):
+        root = Path(__file__).resolve().parents[1]
+        expected = {
+            "amazon_sports_clothing.yaml": (
+                "Sports_and_Outdoors", "Clothing_Shoes_and_Jewelry", "sports_to_clothing"
+            ),
+            "amazon_phones_electronics.yaml": (
+                "Cell_Phones_and_Accessories", "Electronics", "phones_to_electronics"
+            ),
+            "amazon_books_movies.yaml": ("Books", "Movies_and_TV", "books_to_movies"),
+        }
+        for filename, (source, target, directory) in expected.items():
+            path = root / "configs" / filename
+            dataset = AmazonPreprocessingConfig.from_yaml(path)
+            embedding = QwenEmbeddingConfig.from_yaml(path)
+            tokenizer = TokenizerTrainingConfig.from_yaml(path)
+            self.assertEqual((dataset.source_domain, dataset.target_domain), (source, target))
+            self.assertEqual(dataset.processed_dir.name, directory)
+            self.assertEqual(embedding.provider, "qwen3_local")
+            self.assertEqual(embedding.output_dir.name, directory)
+            self.assertEqual(tokenizer.output_dir.name, directory)
+
     def test_loads_expected_domains_and_converts_paths(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
@@ -35,13 +57,19 @@ class AmazonPreprocessingConfigTests(unittest.TestCase):
             )
             self.assertEqual(config.min_interactions_per_domain, 5)
 
-    def test_rejects_unexpected_source_domain(self):
-        with self.assertRaises(ValueError):
-            AmazonPreprocessingConfig(source_domain="Books")
+    def test_accepts_all_three_gencdr_domain_pairs(self):
+        pairs = (
+            ("Sports_and_Outdoors", "Clothing_Shoes_and_Jewelry"),
+            ("Cell_Phones_and_Accessories", "Electronics"),
+            ("Books", "Movies_and_TV"),
+        )
+        for source, target in pairs:
+            config = AmazonPreprocessingConfig(source_domain=source, target_domain=target)
+            self.assertEqual((config.source_domain, config.target_domain), (source, target))
 
-    def test_rejects_unexpected_target_domain(self):
+    def test_rejects_domain_pair_outside_the_benchmark_protocol(self):
         with self.assertRaises(ValueError):
-            AmazonPreprocessingConfig(target_domain="Movies_and_TV")
+            AmazonPreprocessingConfig(source_domain="Books", target_domain="Electronics")
 
     def test_rejects_threshold_below_three(self):
         with self.assertRaises(ValueError):

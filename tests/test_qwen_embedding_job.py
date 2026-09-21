@@ -24,6 +24,12 @@ class FakeProvider:
 
 
 class QwenEmbeddingJobTests(unittest.TestCase):
+    def test_embedding_cli_accepts_device_override(self):
+        from experiments.embed_items import build_parser
+
+        args = build_parser().parse_args(["--config", "experiment.yaml", "--device", "cpu"])
+        self.assertEqual(args.device, "cpu")
+
     @patch("experiments.embed_items.Qwen3EmbeddingProvider")
     def test_smoke_test_selects_local_qwen3_8b_provider(self, provider_class):
         provider_class.return_value.encode_text.return_value = torch.ones((1, 768))

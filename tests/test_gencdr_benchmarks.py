@@ -36,7 +36,7 @@ class GenCDRBenchmarkRunnerTests(unittest.TestCase):
         )
         self.assertEqual(BENCHMARKS["sports_to_clothing"].target_domain, "Clothing_Shoes_and_Jewelry")
         self.assertEqual(BENCHMARKS["phones_to_electronics"].target_domain, "Electronics")
-        self.assertEqual(BENCHMARKS["books_to_movies"].target_domain, "Movies")
+        self.assertEqual(BENCHMARKS["books_to_movies"].target_domain, "Movies_and_TV")
 
     def test_preflight_reports_all_missing_assets_before_training(self):
         with tempfile.TemporaryDirectory() as directory:
