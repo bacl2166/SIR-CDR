@@ -196,6 +196,53 @@ The v4 model changes learned parameter wiring and checkpoint identity. A v3
 `best_model.pt` cannot be evaluated with v4 code and must not be copied into
 `artifacts/text_cdr_v4/`; train a new v4 checkpoint in that isolated output root.
 
+## Three GenCDR Dataset Pairs
+
+`experiments/run_gencdr_benchmarks.py` runs the three dataset pairs used by
+GenCDR through one auditable SIR-CDR v4 protocol:
+
+- Sports -> Clothing
+- Phones -> Electronics
+- Books -> Movies
+
+The runner requires completed processed splits and tokenizer schema v2 artifacts
+for every selected pair. It checks every input before allocating the GPU and
+stops without starting any training when an input is missing or invalid.
+
+```bash
+python experiments/run_gencdr_benchmarks.py --action preflight
+```
+
+Run the three seed-42 jobs sequentially on one GPU. Training is resumable. After
+each checkpoint is complete, the runner tunes score fusion on validation for
+`none`, `log_softmax`, and `zscore`, then evaluates the held-out test split once.
+
+```bash
+mkdir -p logs
+nohup python -u experiments/run_gencdr_benchmarks.py \
+  --action all --device cuda --seed 42 \
+  > logs/gencdr_three_datasets_seed42.log 2>&1 &
+echo $! > logs/gencdr_three_datasets_seed42.pid
+```
+
+Monitor and summarize:
+
+```bash
+tail -f logs/gencdr_three_datasets_seed42.log
+python experiments/run_gencdr_benchmarks.py --action summarize --seed 42
+```
+
+Final reports are written to:
+
+```text
+artifacts/text_cdr_v4/benchmark_reports/gencdr_three_datasets_seed42.json
+artifacts/text_cdr_v4/benchmark_reports/gencdr_three_datasets_seed42.csv
+```
+
+The default three-pair run is one directional, following the repository's
+Sports-to-Clothing convention. A bidirectional table requires six separately
+configured target-domain runs.
+
 ## Verify
 
 ```bash
