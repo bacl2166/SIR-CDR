@@ -8,7 +8,10 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from cdr_framework.experiment_config import TokenizerTrainingConfig  # noqa: E402
+from cdr_framework.experiment_config import (  # noqa: E402
+    AmazonPreprocessingConfig,
+    TokenizerTrainingConfig,
+)
 from cdr_framework.tokenization.training import (  # noqa: E402
     load_tokenizer_dataset,
     train_semantic_tokenizer,
@@ -37,14 +40,26 @@ def _repository_path(path: Path) -> Path:
     return path if path.is_absolute() else REPOSITORY_ROOT / path
 
 
-def run(config: TokenizerTrainingConfig, *, device: str | None, force: bool) -> int:
+def run(
+    config: TokenizerTrainingConfig,
+    *,
+    device: str | None,
+    force: bool,
+    source_domain: str = "Sports_and_Outdoors",
+    target_domain: str = "Clothing_Shoes_and_Jewelry",
+) -> int:
     config = replace(
         config,
         embeddings_path=_repository_path(config.embeddings_path),
         item_texts_path=_repository_path(config.item_texts_path),
         output_dir=_repository_path(config.output_dir),
     )
-    dataset = load_tokenizer_dataset(config.embeddings_path, config.item_texts_path)
+    dataset = load_tokenizer_dataset(
+        config.embeddings_path,
+        config.item_texts_path,
+        source_domain=source_domain,
+        target_domain=target_domain,
+    )
 
     def report(metrics: dict[str, float]) -> None:
         print(
@@ -77,7 +92,14 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         config = TokenizerTrainingConfig.from_yaml(args.config)
-        return run(config, device=args.device, force=args.force)
+        dataset = AmazonPreprocessingConfig.from_yaml(args.config)
+        return run(
+            config,
+            device=args.device,
+            force=args.force,
+            source_domain=dataset.source_domain,
+            target_domain=dataset.target_domain,
+        )
     except Exception as error:
         print(f"Tokenizer training failed: {error}", file=sys.stderr)
         return 1

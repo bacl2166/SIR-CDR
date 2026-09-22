@@ -14,6 +14,32 @@ from cdr_framework.tokenization.training import (
 
 
 class TokenizerTrainingTests(unittest.TestCase):
+    def test_loads_configured_source_and_target_domains(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            embeddings_path = root / "embeddings.pt"
+            item_texts_path = root / "items.jsonl"
+            torch.save(torch.zeros((5, 6)), embeddings_path)
+            rows = [
+                {"item_id": 1, "domain": "Cell_Phones_and_Accessories", "text": "p1"},
+                {"item_id": 2, "domain": "Cell_Phones_and_Accessories", "text": "p2"},
+                {"item_id": 3, "domain": "Electronics", "text": "e1"},
+                {"item_id": 4, "domain": "Electronics", "text": "e2"},
+            ]
+            item_texts_path.write_text(
+                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+            )
+
+            dataset = load_tokenizer_dataset(
+                embeddings_path,
+                item_texts_path,
+                source_domain="Cell_Phones_and_Accessories",
+                target_domain="Electronics",
+            )
+
+            self.assertEqual(dataset.domains.tolist(), [0, 0, 1, 1])
+            self.assertEqual(dataset.domain_labels, ("Cell_Phones_and_Accessories", "Electronics"))
+
     def test_trains_exports_fixed_semantic_ids_and_reuses_completed_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -29,6 +29,7 @@ class TokenizerDataset:
     vectors: torch.Tensor
     domains: torch.Tensor
     domain_names: tuple[str, ...]
+    domain_labels: tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,12 @@ class TrainableSemanticTokenizer(nn.Module):
 def load_tokenizer_dataset(
     embeddings_path: str | Path,
     item_texts_path: str | Path,
+    *,
+    source_domain: str = SOURCE_DOMAIN,
+    target_domain: str = TARGET_DOMAIN,
 ) -> TokenizerDataset:
+    if not source_domain or not target_domain or source_domain == target_domain:
+        raise ValueError("Tokenizer domains must be distinct non-empty names.")
     vectors = torch.load(embeddings_path, map_location="cpu", weights_only=True).float()
     if vectors.ndim != 2 or vectors.shape[0] < 2:
         raise ValueError("Embedding matrix must have shape [num_items + 1, dimension].")
@@ -96,7 +102,7 @@ def load_tokenizer_dataset(
             payload = json.loads(line)
             item_id = int(payload["item_id"])
             domain = str(payload["domain"])
-            if domain not in {SOURCE_DOMAIN, TARGET_DOMAIN}:
+            if domain not in {source_domain, target_domain}:
                 raise ValueError(f"Unknown domain at line {line_number}: {domain}")
             if item_id in records:
                 raise ValueError(f"Duplicate item_id at line {line_number}: {item_id}")
@@ -108,10 +114,16 @@ def load_tokenizer_dataset(
     item_ids = torch.arange(1, vectors.shape[0], dtype=torch.long)
     domain_names = tuple(records[item_id] for item_id in item_ids.tolist())
     domains = torch.tensor(
-        [0 if domain == SOURCE_DOMAIN else 1 for domain in domain_names],
+        [0 if domain == source_domain else 1 for domain in domain_names],
         dtype=torch.long,
     )
-    return TokenizerDataset(item_ids, vectors[1:], domains, domain_names)
+    return TokenizerDataset(
+        item_ids,
+        vectors[1:],
+        domains,
+        domain_names,
+        (source_domain, target_domain),
+    )
 
 
 def _save_atomic(path: Path, payload: object) -> None:
@@ -156,6 +168,7 @@ def _checkpoint(
     epoch: int,
     history: list[dict[str, float]],
     config: TokenizerTrainingConfig,
+    domain_labels: tuple[str, str],
 ) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -164,6 +177,7 @@ def _checkpoint(
         "optimizer_state": optimizer.state_dict(),
         "history": history,
         "config": _config_payload(config),
+        "domain_labels": domain_labels,
     }
 
 
@@ -221,6 +235,8 @@ def train_semantic_tokenizer(
             raise RuntimeError("Tokenizer checkpoint schema mismatch; use --force to restart.")
         if state.get("config") != _config_payload(config):
             raise RuntimeError("Tokenizer resume configuration mismatch; use --force to restart.")
+        if tuple(state.get("domain_labels", ())) != dataset.domain_labels:
+            raise RuntimeError("Tokenizer resume domain mismatch; use --force to restart.")
         model.load_state_dict(state["model_state"])
         optimizer.load_state_dict(state["optimizer_state"])
         history = state["history"]
@@ -260,7 +276,7 @@ def train_semantic_tokenizer(
         history.append(metrics)
         _save_atomic(
             state_path,
-            _checkpoint(model, optimizer, epoch + 1, history, config),
+            _checkpoint(model, optimizer, epoch + 1, history, config, dataset.domain_labels),
         )
         _write_json(output / "training_history.json", history)
         if report:
@@ -312,6 +328,7 @@ def train_semantic_tokenizer(
             "model_state": model.state_dict(),
             "codebooks": codebooks.cpu(),
             "config": _config_payload(config),
+            "domain_labels": dataset.domain_labels,
         },
     )
     item_tokens_path = output / "item_semantic_ids.jsonl"
@@ -348,6 +365,7 @@ def train_semantic_tokenizer(
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "item_count": len(dataset.item_ids),
+        "domain_labels": dataset.domain_labels,
         "input_dim": config.input_dim,
         "hidden_dim": config.hidden_dim,
         "codebook_size": config.codebook_size,
