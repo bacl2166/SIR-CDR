@@ -1,5 +1,15 @@
 # SIR-CDR: Text-only Cross-domain Recommendation
 
+## Optional Qwen user-side latent reasoning
+
+The new `llm-cdr-v1` path reuses the Qwen3-Embedding-8B assets and runs
+Qwen3-4B-Instruct-2507 with LoRA, projected structural tokens, and two latent
+passes with a separate persistent memory. It has its own runner/configs and
+compact checkpoints; the Text v4 baseline below is unchanged. It is not a
+pure-generative ranking migration or an AGCLR CoT-curriculum reproduction.
+See [the Chinese implementation and server guide](docs/llm_latent_v1_zh.md).
+
+
 The active v4 pipeline combines cached text embeddings, sparse shared/private graphs,
 gated latent reasoning, context prediction feedback (CPF), and Semantic ID generation.
 It accepts no image or multimodal inputs and learns no raw item-ID embeddings.
