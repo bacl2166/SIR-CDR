@@ -186,16 +186,72 @@ class CheckpointIdentityTests(unittest.TestCase):
             self.assertEqual(runtime.fusion_normalization, "zscore")
 
 
-    def test_label_smoothing_parses_and_stays_out_of_signature_payload(self):
+    def test_label_smoothing_parses_and_changes_training_identity(self):
+        from dataclasses import replace
         from cdr_framework.formal_training import _config_payload
         from cdr_framework.text_config import TextCDRConfig
+        from cdr_framework import text_training
 
         base = TextCDRConfig()
         self.assertAlmostEqual(base.label_smoothing, 0.0)
-        self.assertNotIn("label_smoothing", _config_payload(base))
+        self.assertEqual(_config_payload(base)["label_smoothing"], 0.0)
         tuned = TextCDRConfig.from_yaml(str(ROOT / "configs/text_sports_clothing_l3a.yaml"))
         self.assertAlmostEqual(tuned.label_smoothing, 0.1)
-        self.assertNotIn("label_smoothing", _config_payload(tuned))
+        self.assertEqual(_config_payload(tuned)["label_smoothing"], 0.1)
+        with mock.patch.object(text_training, "_artifact_fingerprints", return_value={}):
+            identity = text_training.signature(base)
+            changed = replace(base, label_smoothing=0.1)
+            self.assertNotEqual(identity, text_training.signature(changed))
+            for require_code in (True, False):
+                ok, why = verify_checkpoint_identity(
+                    {"identity": identity}, changed, require_code=require_code
+                )
+                self.assertFalse(ok)
+                self.assertEqual(why, "config mismatch")
+
+    def test_legacy_identity_without_smoothing_is_rejected_even_at_zero(self):
+        from cdr_framework.text_config import TextCDRConfig
+        from cdr_framework import text_training
+
+        config = TextCDRConfig()
+        with mock.patch.object(text_training, "_artifact_fingerprints", return_value={}):
+            legacy = text_training.signature(config)
+            legacy["config"].pop("label_smoothing", None)
+            ok, why = verify_checkpoint_identity(
+                {"identity": legacy}, config, require_code=False
+            )
+        self.assertFalse(ok)
+        self.assertEqual(why, "config mismatch")
+
+    def test_smoothing_drift_blocks_manifest_reuse_and_checkpoint_resume(self):
+        import json
+        from dataclasses import replace
+        import torch
+        from cdr_framework.text_config import TextCDRConfig
+        from cdr_framework import text_training
+
+        for artifact in ("manifest.json", "last_checkpoint.pt"):
+            for legacy in (False, True):
+                with self.subTest(artifact=artifact, legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                    base = TextCDRConfig(output_dir=Path(directory))
+                    changed = replace(base, label_smoothing=0.1)
+                    with mock.patch.object(text_training, "_artifact_fingerprints", return_value={}):
+                        identity = text_training.signature(base)
+                        if legacy:
+                            identity["config"].pop("label_smoothing", None)
+                        state = {"identity": identity}
+                        path = base.output_dir / artifact
+                        if artifact.endswith("json"):
+                            path.write_text(json.dumps(state), encoding="utf-8")
+                        else:
+                            torch.save(state, path)
+                        before = path.read_bytes()
+                        model = torch.nn.Linear(1, 1)
+                        with mock.patch.object(text_training, "build_model", return_value=(model, None)), \
+                             mock.patch.object(text_training, "load_rows", return_value=[]):
+                            with self.assertRaisesRegex(RuntimeError, "changed|mismatch"):
+                                text_training.train(changed, torch.device("cpu"))
+                        self.assertEqual(path.read_bytes(), before)
 
 
 if __name__ == "__main__":

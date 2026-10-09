@@ -37,7 +37,8 @@ def _config_payload(config: RecommendationTrainingConfig) -> dict:
     for name in ("processed_dir", "tokenizer_dir", "output_dir"):
         payload[name] = str(payload[name])
     payload["top_ks"] = list(payload["top_ks"])
-    payload.pop("label_smoothing", None)  # training-only auxiliary; excluded so the signature stays compatible with older checkpoints
+    # Keep all training objectives, including label_smoothing. Missing legacy
+    # fields must fail identity checks rather than imply an unverified default.
     return payload
 
 
