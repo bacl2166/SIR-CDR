@@ -58,6 +58,18 @@ cd SIR-CDR
 
 先 CPU 转换检查协议与规模，再运行 GPU 资产生成：
 
+若 github.com 的443端口不可达，可从 codeload 下载固定提交ZIP，不依赖Git克隆：
+
+```bash
+curl -fL --retry 3 --connect-timeout 20 --max-time 600 -o /root/autodl-tmp/gencdsr-reference.zip https://codeload.github.com/Applied-Machine-Learning-Lab/RecSys2026_GenCDSR/zip/bace0d18f53bfeb56ab9bdd564494055b6c38db7
+python experiments/prepare_gencdsr_assets.py --reference-archive /root/autodl-tmp/gencdsr-reference.zip --action convert
+python experiments/prepare_gencdsr_assets.py --reference-archive /root/autodl-tmp/gencdsr-reference.zip --device cuda
+```
+
+入口只提取六份JSON，逐文件验证固定提交的SHA256；不创建伪造的Git身份。
+codeload是另一个下载域名，不保证服务器一定可访问。失败时可以在可联网的
+本地下载同一ZIP后上传服务器，仍执行相同校验。
+
 ```bash
 python experiments/prepare_gencdsr_assets.py --reference-root ../GenCDSR-reference --action convert
 nohup python -u experiments/prepare_gencdsr_assets.py --reference-root ../GenCDSR-reference --device cuda > logs/prepare_gencdsr_book_movie.log 2>&1 &

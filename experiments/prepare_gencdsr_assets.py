@@ -1,5 +1,6 @@
 """Convert the published GenCDSR Book/Movie sequences without inventing timestamps."""
 import argparse
+import hashlib
 from collections import Counter
 from dataclasses import replace
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import yaml
+from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,6 +16,41 @@ from cdr_framework.formal_training import _sha256, _write_json
 
 UPSTREAM = "https://github.com/Applied-Machine-Learning-Lab/RecSys2026_GenCDSR.git"
 REVISION = "bace0d18f53bfeb56ab9bdd564494055b6c38db7"
+EXPECTED_FILES = {
+    "Book_Movie.inter.json": "5b0041a60cf6df2428964889ccd6442f5db6431cddfaf126945673e1ae1e4cf3",
+    "Book_Movie.domain.json": "30de8715b9c2778f5654b4c7cb36577d5695a7c73e112a2d0d24cdacb1b805c1",
+    "Book/Book.inter.json": "2d6630782ad2c933137a9029fe871dcf0912d5aceb2da8ae50e3881f040265ba",
+    "Book/Book.item.json": "349c1a0a7897112fd3da96cd7d4a3acaeb87040d2d803ce3f85820a0f2ccec7c",
+    "Movie/Movie.inter.json": "66cd65c03ba559c784c03d499a15cf548df5550abae468c889f5f57f0877f625",
+    "Movie/Movie.item.json": "95babcea96f76f63918c40198ad118b96afeb3ab74eab8561e3525382794cc98",
+}
+
+
+def extract_reference_archive(archive, destination):
+    """Extract just six fixed files; data hashes prove the snapshot without Git."""
+    destination = Path(destination)
+    prefix = f"RecSys2026_GenCDSR-{REVISION}/data/Book_Movie/"
+    verified = {}
+    with ZipFile(archive) as source:
+        names = source.namelist()
+        for name, expected in EXPECTED_FILES.items():
+            member = prefix + name
+            if names.count(member) != 1:
+                raise ValueError(f"Missing/duplicate pinned archive member: {name}")
+            if source.getinfo(member).file_size > 32 * 1024**2:
+                raise ValueError(f"Unexpected archive size: {name}")
+            data = source.read(member)
+            if hashlib.sha256(data).hexdigest() != expected:
+                raise ValueError(f"Pinned data hash mismatch: {name}")
+            path = destination / "data/Book_Movie" / name
+            if path.exists() and _sha256(path) != expected:
+                raise ValueError(f"Existing reference data changed: {path}")
+            verified[path] = data
+    # Do not use extractall: unneeded archive paths are never written.
+    for path, data in verified.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return destination
 
 
 def convert_dataset(raw, output, target="Movie", revision=REVISION):
@@ -137,17 +174,29 @@ def convert_dataset(raw, output, target="Movie", revision=REVISION):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference-root", type=Path, required=True)
+    reference = parser.add_mutually_exclusive_group(required=True)
+    reference.add_argument("--reference-root", type=Path)
+    reference.add_argument("--reference-archive", type=Path, help="Pinned codeload ZIP; all six data hashes verified")
     parser.add_argument("--config", default="configs/gencdsr_book_movie.yaml")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--action", choices=("convert", "all"), default="all")
     args = parser.parse_args()
-    revision = subprocess.check_output(["git", "-C", str(args.reference_root), "rev-parse", "HEAD"], text=True).strip()
-    if revision != REVISION:
-        raise ValueError(f"Reference must be pinned to {REVISION}; found {revision}")
-    status = subprocess.check_output(["git", "-C", str(args.reference_root), "status", "--porcelain", "--", "data/Book_Movie"], text=True)
-    if status.strip():
-        raise ValueError("Reference data have local changes")
+    revision = REVISION
+    if args.reference_archive:
+        args.reference_root = extract_reference_archive(
+            args.reference_archive, ROOT / "data/raw/gencdsr_reference" / REVISION)
+    else:
+        if not (args.reference_root / "data/Book_Movie").is_dir():
+            parser.error("Reference checkout is missing; clone successfully or use --reference-archive")
+        revision = subprocess.check_output(["git", "-C", str(args.reference_root), "rev-parse", "HEAD"], text=True).strip()
+        if revision != REVISION:
+            raise ValueError(f"Reference must be pinned to {REVISION}; found {revision}")
+        status = subprocess.check_output(["git", "-C", str(args.reference_root), "status", "--porcelain", "--", "data/Book_Movie"], text=True)
+        if status.strip():
+            raise ValueError("Reference data have local changes")
+    for name, expected in EXPECTED_FILES.items():
+        if _sha256(args.reference_root / "data/Book_Movie" / name) != expected:
+            raise ValueError(f"Pinned data hash mismatch: {name}")
     cfg = Path(args.config)
     if not cfg.is_absolute(): cfg = ROOT / cfg
     payload = yaml.safe_load(cfg.read_text(encoding="utf-8")); dataset = payload["dataset"]
