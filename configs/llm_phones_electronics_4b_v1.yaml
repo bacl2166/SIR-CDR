@@ -1,0 +1,39 @@
+# Run --action prepare to resolve main to an immutable model revision.
+llm_recommendation:
+  processed_dir: data/processed/phones_to_electronics
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/phones_to_electronics
+  output_dir: artifacts/llm_cdr_v1/phones_to_electronics/seed42
+  llm_model_name: Qwen/Qwen3-4B-Instruct-2507
+  llm_revision: main
+  llm_dtype: bfloat16
+  llm_local_files_only: true
+  llm_gradient_checkpointing: true
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  hidden_dim: 128
+  reasoning_steps: 2
+  feedback_steps: 1
+  batch_size: 1
+  evaluation_batch_size: 1
+  gradient_accumulation_steps: 16
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  max_epochs: 30
+  evaluation_every: 1
+  patience: 5
+  scheduler_patience: 2
+  max_sequence_length: 50
+  contrastive_alignment: false
+  label_smoothing: 0.0
+  selection_metric: NDCG@10
+  inference_mode: hybrid
+  top_ks: [5, 10, 20]
+  rerank_candidates: 500
+  decode_chunk_size: 64
+  retrieval_loss_weight: 1.0
+  generation_loss_weight: 1.0
+  retrieval_score_weight: 1.0
+  generation_score_weight: 0.5
+  fusion_normalization: zscore
+  seed: 42

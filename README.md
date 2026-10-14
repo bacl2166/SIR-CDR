@@ -2,12 +2,16 @@
 
 ## Optional Qwen user-side latent reasoning
 
-The new `llm-cdr-v1` path reuses the Qwen3-Embedding-8B assets and runs
-Qwen3-4B-Instruct-2507 with LoRA, projected structural tokens, and two latent
-passes with a separate persistent memory. It has its own runner/configs and
+The `llm-cdr-v1` path reuses the Qwen3-Embedding-8B assets. The active Sports/Clothing
+and Phones/Electronics templates use a pinned Qwen3-0.6B backbone with LoRA,
+projected structural tokens, and two latent passes with separate per-example
+memory carried between the passes. Explicit `llm_*_4b_v1.yaml` templates preserve
+the previous 4B configuration. This path has its own runner/configs and
 compact checkpoints; the Text v4 baseline below is unchanged. It is not a
 pure-generative ranking migration or an AGCLR CoT-curriculum reproduction.
 See [the Chinese implementation and server guide](docs/llm_latent_v1_zh.md).
+For the 0.6B migration and isolated server commands, see
+[the small-model guide](docs/qwen06_user_backbone_zh.md).
 
 
 The active v4 pipeline combines cached text embeddings, sparse shared/private graphs,

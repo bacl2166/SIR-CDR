@@ -1,5 +1,10 @@
 # SIR-CDR：Qwen 用户侧两步连续隐推理（llm-cdr-v1）
 
+更新：前两组任务的默认模板已切换到固定版本 Qwen3-0.6B，服务器请使用新的
+runtime 文件和输出目录，见 [0.6B 操作说明](qwen06_user_backbone_zh.md)。
+原 4B 模板保留为 llm_sports_clothing_4b_v1.yaml 和 llm_phones_electronics_4b_v1.yaml。
+以下 4B 描述保留用于解释旧实验；已有 runtime 文件不会自动更换骨干。
+
 本版本实现用户确认的组合：复用 Qwen3-Embedding-8B 离线物品资产，
 引入 Qwen/Qwen3-4B-Instruct-2507，使用 LoRA 和结构投影，维护独立持久记忆，
 执行两步语言模型隐推理。训练和实际数据验证在远端服务器进行。
