@@ -32,11 +32,11 @@ class GenCDRBenchmarkRunnerTests(unittest.TestCase):
     def test_registry_contains_the_three_paper_dataset_pairs(self):
         self.assertEqual(
             tuple(BENCHMARKS),
-            ("sports_to_clothing", "phones_to_electronics", "books_to_movies"),
+            ("sports_to_clothing", "phones_to_electronics", "gencdsr_book_movie"),
         )
         self.assertEqual(BENCHMARKS["sports_to_clothing"].target_domain, "Clothing_Shoes_and_Jewelry")
         self.assertEqual(BENCHMARKS["phones_to_electronics"].target_domain, "Electronics")
-        self.assertEqual(BENCHMARKS["books_to_movies"].target_domain, "Movies_and_TV")
+        self.assertEqual(BENCHMARKS["gencdsr_book_movie"].target_domain, "Movie")
 
     def test_preflight_reports_all_missing_assets_before_training(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,57 @@
+dataset:
+  source_domain: Book
+  target_domain: Movie
+  processed_dir: data/processed/gencdsr_book_movie
+embedding:
+  provider: qwen3_local
+  model: Qwen/Qwen3-Embedding-8B
+  dimension: 768
+  batch_size: 1
+  max_retries: 5
+  retry_initial_seconds: 2.0
+  input_path: data/processed/gencdsr_book_movie/item_texts.jsonl
+  output_dir: artifacts/embeddings/qwen3_8b/gencdsr_book_movie
+  device: cuda
+  max_sequence_length: 8192
+  model_path_env: QWEN3_EMBEDDING_MODEL_PATH
+tokenizer:
+  embeddings_path: artifacts/embeddings/qwen3_8b/gencdsr_book_movie/text_embeddings.pt
+  item_texts_path: data/processed/gencdsr_book_movie/item_texts.jsonl
+  output_dir: artifacts/tokenizer/qwen3_8b/gencdsr_book_movie
+  input_dim: 768
+  hidden_dim: 128
+  codebook_size: 512
+  token_length: 4
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 1.0e-05
+  max_epochs: 100
+  domain_loss_weight: 0.1
+  gate_balance_weight: 0.01
+  kmeans_iterations: 20
+  max_collision_rate: 0.1
+  min_level_utilization: 0.1
+  seed: 42
+recommendation:
+  processed_dir: data/processed/gencdsr_book_movie
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/gencdsr_book_movie
+  output_dir: artifacts/recommendation/qwen3_8b/gencdsr_book_movie
+  hidden_dim: 128
+  reasoning_steps: 3
+  prefix_length: 4
+  max_sequence_length: 50
+  batch_size: 256
+  evaluation_batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 1.0e-05
+  max_epochs: 100
+  evaluation_every: 5
+  patience: 5
+  retrieval_temperature: 0.1
+  top_ks:
+  - 5
+  - 10
+  - 20
+  candidate_chunk_size: 2048
+  rerank_candidates: 200
+  seed: 42

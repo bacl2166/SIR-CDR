@@ -1,8 +1,7 @@
-# Run --action prepare to resolve main to an immutable model revision.
 llm_recommendation:
-  processed_dir: data/processed/books_to_movies
-  tokenizer_dir: artifacts/tokenizer/qwen3_8b/books_to_movies
-  output_dir: artifacts/llm_cdr_v1/books_to_movies/seed42
+  processed_dir: data/processed/gencdsr_book_movie
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/gencdsr_book_movie
+  output_dir: artifacts/llm_cdr_v1/gencdsr_book_movie/seed42
   llm_model_name: Qwen/Qwen3-4B-Instruct-2507
   llm_revision: main
   llm_dtype: bfloat16
@@ -28,7 +27,10 @@ llm_recommendation:
   label_smoothing: 0.0
   selection_metric: NDCG@10
   inference_mode: hybrid
-  top_ks: [5, 10, 20]
+  top_ks:
+  - 5
+  - 10
+  - 20
   rerank_candidates: 500
   decode_chunk_size: 64
   retrieval_loss_weight: 1.0

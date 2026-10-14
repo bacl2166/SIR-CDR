@@ -206,14 +206,16 @@ The v4 model changes learned parameter wiring and checkpoint identity. A v3
 `best_model.pt` cannot be evaluated with v4 code and must not be copied into
 `artifacts/text_cdr_v4/`; train a new v4 checkpoint in that isolated output root.
 
-## Three GenCDR Dataset Pairs
+## Three Default Dataset Tasks
 
-`experiments/run_gencdr_benchmarks.py` runs the three dataset pairs used by
-GenCDR through one auditable SIR-CDR v4 protocol:
+The default asset registry contains two Amazon tasks and the published GenCDSR
+Book/Movie task. This is a reconstructed SIR protocol, not an exact reproduction
+of either paper's sample population. See `docs/gencdsr_assets_and_tuning_zh.md`.
+The legacy `run_gencdr_benchmarks.py` trains Text v4; LLM v1 uses `run_llm_cdr.py`.
 
 - Sports -> Clothing
 - Phones -> Electronics
-- Books -> Movies
+- GenCDSR Book -> Movie (independent overlap/novel-item subset)
 
 The runner requires completed processed splits and tokenizer schema v2 artifacts
 for every selected pair. It checks every input before allocating the GPU and
@@ -231,15 +233,17 @@ Qwen embedding batches and tokenizer epochs resume from their managed outputs.
 ```bash
 mkdir -p logs
 nohup python -u experiments/prepare_gencdr_assets.py \
-  --pairs phones_to_electronics books_to_movies --device cuda \
+  --pairs phones_to_electronics --device cuda \
   > logs/prepare_gencdr_assets.log 2>&1 &
 echo $! > logs/prepare_gencdr_assets.pid
 ```
 
-The exact Amazon categories are `Cell_Phones_and_Accessories -> Electronics`
-and `Books -> Movies_and_TV`. The script uses the same chronological,
-per-user leave-two-out protocol and Qwen3-Embedding-8B tokenizer settings as
-the existing Sports-to-Clothing run. After it finishes, rerun the preflight.
+The Amazon tasks retain their existing processing and asset locations. The
+third task uses `prepare_gencdsr_assets.py --reference-root <pinned-checkout>`;
+the default asset runner also accepts `--pairs gencdsr_book_movie` with the
+same `--reference-root`. Amazon Books/Movies is no longer in the default registry.
+After preparing Book/Movie, rerun preflight. Do not rerun the completed Amazon
+recommendation training just to add the third asset set.
 
 Run the three seed-42 jobs sequentially on one GPU. Training is resumable. After
 each checkpoint is complete, the runner tunes score fusion on validation for

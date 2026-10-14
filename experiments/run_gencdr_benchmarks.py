@@ -49,12 +49,12 @@ BENCHMARKS = {
         Path("artifacts/tokenizer/qwen3_8b/phones_to_electronics"),
         "Electronics",
     ),
-    "books_to_movies": BenchmarkSpec(
-        "books_to_movies",
-        Path("configs/text_books_movies_v4_p0.yaml"),
-        Path("data/processed/books_to_movies"),
-        Path("artifacts/tokenizer/qwen3_8b/books_to_movies"),
-        "Movies_and_TV",
+    "gencdsr_book_movie": BenchmarkSpec(
+        "gencdsr_book_movie",
+        Path("configs/text_gencdsr_book_movie_v4_p0.yaml"),
+        Path("data/processed/gencdsr_book_movie"),
+        Path("artifacts/tokenizer/qwen3_8b/gencdsr_book_movie"),
+        "Movie",
     ),
 }
 
@@ -301,7 +301,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the three GenCDR paper dataset pairs through the SIR-CDR v4 protocol."
+        description="Run the three default tasks through the reconstructed SIR-CDR v4 protocol."
     )
     parser.add_argument("--action", choices=("preflight", "train", "evaluate", "all", "summarize"), default="preflight")
     parser.add_argument("--device", default="cuda")

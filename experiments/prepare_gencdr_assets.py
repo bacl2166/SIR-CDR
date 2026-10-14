@@ -27,7 +27,7 @@ from experiments.run_gencdr_benchmarks import (  # noqa: E402
 ASSET_CONFIGS = {
     "sports_to_clothing": Path("configs/amazon_sports_clothing.yaml"),
     "phones_to_electronics": Path("configs/amazon_phones_electronics.yaml"),
-    "books_to_movies": Path("configs/amazon_books_movies.yaml"),
+    "gencdsr_book_movie": Path("configs/gencdsr_book_movie.yaml"),
 }
 
 PROCESSED_FILES = (
@@ -93,7 +93,14 @@ def prepare_pair(
     *,
     device: str,
     skip_download: bool,
+    reference_root: Path | None = None,
 ) -> None:
+    if name == "gencdsr_book_movie":
+        if reference_root is None:
+            raise ValueError("Book/Movie requires --reference-root with the pinned GenCDSR checkout")
+        _run([sys.executable, "experiments/prepare_gencdsr_assets.py", "--reference-root",
+              str(reference_root.resolve()), "--device", device])
+        return
     config_path = ROOT / ASSET_CONFIGS[name]
     dataset = AmazonPreprocessingConfig.from_yaml(config_path)
     embedding = QwenEmbeddingConfig.from_yaml(config_path)
@@ -161,10 +168,11 @@ def prepare_pair(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Prepare resumable data, Qwen3 embeddings, and Semantic IDs for GenCDR pairs."
+        description="Prepare two Amazon tasks and the pinned GenCDSR Book/Movie task."
     )
     parser.add_argument("--pairs", nargs="+", choices=tuple(ASSET_CONFIGS))
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--reference-root", type=Path, help="Pinned GenCDSR checkout for Book/Movie")
     parser.add_argument(
         "--skip-download",
         action="store_true",
@@ -175,7 +183,8 @@ def main() -> int:
     try:
         repository_identity(ROOT)
         for name in names:
-            prepare_pair(name, device=args.device, skip_download=args.skip_download)
+            prepare_pair(name, device=args.device, skip_download=args.skip_download,
+                         reference_root=args.reference_root)
         report = preflight_assets(ROOT, tuple(BENCHMARKS[name] for name in names))
         print(json.dumps({"ready": report}, indent=2, sort_keys=True), flush=True)
         return 0
