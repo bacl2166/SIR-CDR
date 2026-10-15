@@ -4,12 +4,16 @@ from importlib.metadata import version
 import json
 from pathlib import Path
 import random
+import time
 import torch
 from torch.utils.data import DataLoader
 
-from cdr_framework.formal_training import _artifact_fingerprints, _save_atomic, _sha256, _write_json
+from cdr_framework.formal_training import _artifact_fingerprints, _save_atomic, _sha256, _write_json, load_fixed_catalog
+from cdr_framework.llm_efficiency import DeviceLossMeter
+from cdr_framework.llm_model import LLMSIRCDR
 from cdr_framework.llm_reasoner import QwenLatentReasoner
 from cdr_framework.text_data import collate_text_rows
+from cdr_framework.text_graph import build_training_graphs
 from cdr_framework import text_training
 
 VERSION = "llm-cdr-v1"
@@ -29,7 +33,7 @@ def signature(config):
     config.require_pinned_model()
     payload = config_payload(config)
     policy = {key: payload.pop(key) for key in text_training.RUNTIME_RANKING_FIELDS}
-    files = ["llm_config.py", "llm_reasoner.py", "llm_training.py", "text_config.py",
+    files = ["llm_config.py", "llm_reasoner.py", "llm_training.py", "llm_model.py", "llm_efficiency.py", "text_config.py",
              "text_data.py", "text_graph.py", "text_model.py", "text_training.py",
              "modules.py", "modules_cpf.py", "ops.py", "losses.py", "catalog_generation.py",
              "formal_training.py", "formal_recommendation.py", "experiment_config.py"]
@@ -43,9 +47,31 @@ def build_model(config, device):
     config.require_pinned_model()
     if device.type == "cpu" and config.llm_dtype != "float32":
         raise ValueError("CPU runs require llm_dtype=float32")
-    model, catalog = text_training.build_model(config, device)
+    # Keep Text v4's factory and fingerprint untouched. The LLM-only subclass
+    # adds an evaluation cache, with the same catalog validation as that factory.
+    catalog = load_fixed_catalog(config)
+    if not torch.isfinite(catalog.item_latents).all() or not torch.isfinite(catalog.codebooks).all():
+        raise ValueError("Non-finite tokenizer artifact")
+    if (catalog.semantic_ids[1:] < 0).any() or (catalog.semantic_ids[1:] >= catalog.codebooks.shape[1]).any():
+        raise ValueError("Invalid semantic token")
+    if catalog.item_latents.shape[1] != catalog.codebooks.shape[2]:
+        raise ValueError("Latent/codebook dimensions differ")
+    graphs = build_training_graphs(config.processed_dir / "train.jsonl", len(catalog.item_latents),
+                                   catalog.target_item_ids, cross_window=config.cross_window)
+    model = LLMSIRCDR(catalog, graphs, config).to(device)
     model.reasoner = QwenLatentReasoner.from_pretrained(config).to(device)
     return model, catalog
+
+
+@torch.no_grad()
+def evaluate(model, rows, config, device, mode=None):
+    model.eval()
+    started = time.perf_counter()
+    with model.evaluation_catalog():
+        result = text_training.evaluate(model, rows, config, device, mode)
+    # Include the one-time catalog build in reported evaluation wall time.
+    result['seconds'] = time.perf_counter() - started
+    return result
 
 
 def _compact_keys(model):
@@ -119,7 +145,11 @@ def train(config, device, *, max_epochs_this_run=None):
         optimizer.zero_grad(set_to_none=True)
         loader = DataLoader(rows, batch_size=config.batch_size, shuffle=True,
             generator=torch.Generator().manual_seed(config.seed + epoch), collate_fn=collate_text_rows)
-        totals, group_examples, updates = {}, 0, 0
+        meter, group_examples, updates = DeviceLossMeter(), 0, 0
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+            torch.cuda.reset_peak_memory_stats(device)
+        train_started = time.perf_counter()
         for batch_number, (batch, _) in enumerate(loader, 1):
             losses = model(batch.to(device))
             if not torch.isfinite(losses["total"]):
@@ -127,8 +157,7 @@ def train(config, device, *, max_epochs_this_run=None):
             count = len(batch.positive_items)
             (losses["total"] * count).backward()
             group_examples += count
-            for key, value in losses.items():
-                totals[key] = totals.get(key, 0.) + float(value.detach()) * count
+            meter.add(losses, count)
             if batch_number % config.gradient_accumulation_steps == 0 or batch_number == len(loader):
                 for param in parameters:
                     if param.grad is not None:
@@ -139,13 +168,21 @@ def train(config, device, *, max_epochs_this_run=None):
                 group_examples = 0
                 updates += 1
                 if updates == 1 or updates % 20 == 0:
+                    loss_value = float(losses['total'].detach())
+                    rate = meter.examples / (time.perf_counter() - train_started)
                     print(f"epoch={epoch+1} batch={batch_number}/{len(loader)} updates={updates} "
-                          f"loss={float(losses['total'].detach()):.6f}", flush=True)
+                          f"samples={meter.examples}/{len(rows)} loss={loss_value:.6f} "
+                          f"samples_per_second={rate:.3f}", flush=True)
+        means = meter.means()
+        train_seconds = time.perf_counter() - train_started
         record = {"epoch": epoch + 1, "optimizer_steps": updates,
                   "lr": optimizer.param_groups[0]["lr"],
-                  **{key: value / len(rows) for key, value in totals.items()}}
+                  **means, "train_seconds": train_seconds,
+                  "train_samples_per_second": len(rows) / train_seconds,
+                  "train_peak_cuda_GiB": (torch.cuda.max_memory_allocated(device) / 2**30
+                                          if device.type == "cuda" else None)}
         if epoch == 0 or (epoch + 1) % config.evaluation_every == 0 or epoch + 1 == config.max_epochs:
-            metrics = text_training.evaluate(model, validation, config, device)
+            metrics = evaluate(model, validation, config, device)
             record["validation"] = metrics
             scheduler.step(metrics[config.selection_metric])
             if metrics[config.selection_metric] > best_score:
@@ -200,6 +237,6 @@ def evaluate_checkpoint(config, device, split="validation", mode=None):
         raise ValueError("Evaluation set is empty")
     result = {"epoch": checkpoint["epoch"], "split": split, "mode": mode,
               "evaluation_identity": evaluation, "checkpoint_sha256": _sha256(checkpoint_path),
-              "metrics": text_training.evaluate(model, rows, config, device, mode)}
+              "metrics": evaluate(model, rows, config, device, mode)}
     _write_json(path, result)
     return result

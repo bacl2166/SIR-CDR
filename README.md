@@ -290,6 +290,16 @@ The report filenames above are legacy names; inspect the actual dataset keys.
 The active run is one directional. Reporting both target domains requires
 separately configured reverse-direction runs.
 
+## Faster Qwen3-0.6B Experiments
+
+Use `python experiments/run_llm_fast.py --action prepare`, then
+`python -u experiments/run_llm_fast.py --action run` for serial Phones/Electronics
+and Sports/Clothing training, validation tuning, verification and final testing.
+This is an independent batch-4 experiment (accumulation 4, eval batch 4,
+checkpointing off), with evaluation catalog reuse and device-side loss logging.
+All settings/code remain signed; old checkpoints are preserved and not silently
+resumed. See [server commands and scientific boundaries](docs/llm_efficiency_zh.md).
+
 ## Verify
 
 ```bash
