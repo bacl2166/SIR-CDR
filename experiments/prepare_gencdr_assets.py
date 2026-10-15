@@ -19,6 +19,7 @@ from cdr_framework.experiment_config import (  # noqa: E402
 )
 from experiments.run_gencdr_benchmarks import (  # noqa: E402
     BENCHMARKS,
+    DEFAULT_PAIRS,
     preflight_assets,
     repository_identity,
 )
@@ -27,7 +28,7 @@ from experiments.run_gencdr_benchmarks import (  # noqa: E402
 ASSET_CONFIGS = {
     "sports_to_clothing": Path("configs/amazon_sports_clothing.yaml"),
     "phones_to_electronics": Path("configs/amazon_phones_electronics.yaml"),
-    "gencdsr_book_movie": Path("configs/gencdsr_book_movie.yaml"),
+    "douban_book_movie": Path("configs/douban_book_movie.yaml"),
 }
 
 PROCESSED_FILES = (
@@ -95,12 +96,12 @@ def prepare_pair(
     skip_download: bool,
     reference_root: Path | None = None,
 ) -> None:
-    if name == "gencdsr_book_movie":
-        if reference_root is None:
-            raise ValueError("Book/Movie requires --reference-root with the pinned GenCDSR checkout")
-        _run([sys.executable, "experiments/prepare_gencdsr_assets.py", "--reference-root",
-              str(reference_root.resolve()), "--device", device])
-        return
+    if name == "douban_book_movie":
+        raise ValueError(
+            "Douban Book-Movie final protocol is pending. First run "
+            "experiments/prepare_gencdr_douban.py --action all for raw asset auditing; "
+            "do not substitute Amazon or GenCDSR assets. See docs/gencdr_douban_alignment_zh.md"
+        )
     config_path = ROOT / ASSET_CONFIGS[name]
     dataset = AmazonPreprocessingConfig.from_yaml(config_path)
     embedding = QwenEmbeddingConfig.from_yaml(config_path)
@@ -168,18 +169,18 @@ def prepare_pair(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Prepare two Amazon tasks and the pinned GenCDSR Book/Movie task."
+        description="Prepare the active Amazon tasks; Douban Book-Movie raw data has a separate audit entry."
     )
     parser.add_argument("--pairs", nargs="+", choices=tuple(ASSET_CONFIGS))
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--reference-root", type=Path, help="Pinned GenCDSR checkout for Book/Movie")
+    parser.add_argument("--reference-root", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--skip-download",
         action="store_true",
         help="Use existing Amazon gzip files and fail if any are missing.",
     )
     args = parser.parse_args()
-    names = args.pairs or list(ASSET_CONFIGS)
+    names = args.pairs or list(DEFAULT_PAIRS)
     try:
         repository_identity(ROOT)
         for name in names:

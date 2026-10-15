@@ -34,6 +34,10 @@ class BenchmarkSpec:
     target_domain: str
 
 
+# The third task is Douban Book-Movie. Enable it explicitly only after its
+# protocol and assets are verified; never reuse Amazon or other-paper assets.
+DEFAULT_PAIRS = ("sports_to_clothing", "phones_to_electronics")
+
 BENCHMARKS = {
     "sports_to_clothing": BenchmarkSpec(
         "sports_to_clothing",
@@ -49,11 +53,11 @@ BENCHMARKS = {
         Path("artifacts/tokenizer/qwen3_8b/phones_to_electronics"),
         "Electronics",
     ),
-    "gencdsr_book_movie": BenchmarkSpec(
-        "gencdsr_book_movie",
-        Path("configs/text_gencdsr_book_movie_v4_p0.yaml"),
-        Path("data/processed/gencdsr_book_movie"),
-        Path("artifacts/tokenizer/qwen3_8b/gencdsr_book_movie"),
+    "douban_book_movie": BenchmarkSpec(
+        "douban_book_movie",
+        Path("configs/text_douban_book_movie_v4_p0.yaml"),
+        Path("data/processed/douban_book_movie"),
+        Path("artifacts/tokenizer/qwen3_8b/douban_book_movie"),
         "Movie",
     ),
 }
@@ -249,7 +253,7 @@ def evaluate_pair(
 
 
 def _selected_specs(names: list[str] | None) -> tuple[BenchmarkSpec, ...]:
-    return tuple(BENCHMARKS[name] for name in (names or list(BENCHMARKS)))
+    return tuple(BENCHMARKS[name] for name in (names or DEFAULT_PAIRS))
 
 
 def action_requires_device(action: str) -> bool:
@@ -301,7 +305,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the three default tasks through the reconstructed SIR-CDR v4 protocol."
+        description="Run SIR-CDR v4 tasks. Third task is Douban Book-Movie; exact GenCDR alignment is pending."
     )
     parser.add_argument("--action", choices=("preflight", "train", "evaluate", "all", "summarize"), default="preflight")
     parser.add_argument("--device", default="cuda")

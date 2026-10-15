@@ -1,7 +1,8 @@
+# Douban Book-Movie only; processed assets pending protocol verification.
 text_recommendation:
-  processed_dir: data/processed/gencdsr_book_movie
-  tokenizer_dir: artifacts/tokenizer/qwen3_8b/gencdsr_book_movie
-  output_dir: artifacts/text_cdr_v4/qwen3_8b/gencdsr_book_movie
+  processed_dir: data/processed/douban_book_movie
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/douban_book_movie
+  output_dir: artifacts/text_cdr_v4/qwen3_8b/douban_book_movie
   hidden_dim: 128
   reasoning_steps: 3
   feedback_steps: 2

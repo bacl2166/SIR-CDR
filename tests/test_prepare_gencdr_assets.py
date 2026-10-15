@@ -19,7 +19,7 @@ class PrepareGenCDRAssetsTests(unittest.TestCase):
             {
                 "sports_to_clothing": Path("configs/amazon_sports_clothing.yaml"),
                 "phones_to_electronics": Path("configs/amazon_phones_electronics.yaml"),
-                "gencdsr_book_movie": Path("configs/gencdsr_book_movie.yaml"),
+                "douban_book_movie": Path("configs/douban_book_movie.yaml"),
             },
         )
 

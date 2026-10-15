@@ -210,16 +210,22 @@ The v4 model changes learned parameter wiring and checkpoint identity. A v3
 `best_model.pt` cannot be evaluated with v4 code and must not be copied into
 `artifacts/text_cdr_v4/`; train a new v4 checkpoint in that isolated output root.
 
-## Three Default Dataset Tasks
+## Active Dataset Tasks and GenCDR Douban Alignment
 
-The default asset registry contains two Amazon tasks and the published GenCDSR
-Book/Movie task. This is a reconstructed SIR protocol, not an exact reproduction
-of either paper's sample population. See `docs/gencdsr_assets_and_tuning_zh.md`.
+The comparison baseline is [GenCDR](https://github.com/hupeiyu21/GenCDR), not
+GenCDSR. The default runners select only the two Amazon tasks while the original
+GenCDR Douban population and evaluation protocol are being verified. The third
+registry entry is exclusively `douban_book_movie`; the old GenCDSR third-task
+adapter, configs and local data have been removed.
+See [GenCDR Douban source and alignment audit](docs/gencdr_douban_alignment_zh.md).
+The [asset design and comparison acceptance criteria](docs/douban_book_movie_asset_design_zh.md)
+describe the remaining stages and why existing results are not yet a matched
+comparison with the published GenCDR numbers.
 The legacy `run_gencdr_benchmarks.py` trains Text v4; LLM v1 uses `run_llm_cdr.py`.
 
 - Sports -> Clothing
 - Phones -> Electronics
-- GenCDSR Book -> Movie (independent overlap/novel-item subset)
+- GenCDR Douban Books/Movies: raw assets available; exact alignment pending
 
 The runner requires completed processed splits and tokenizer schema v2 artifacts
 for every selected pair. It checks every input before allocating the GPU and
@@ -242,14 +248,19 @@ nohup python -u experiments/prepare_gencdr_assets.py \
 echo $! > logs/prepare_gencdr_assets.pid
 ```
 
-The Amazon tasks retain their existing processing and asset locations. The
-third task uses `prepare_gencdsr_assets.py --reference-root <pinned-checkout>`;
-the default asset runner also accepts `--pairs gencdsr_book_movie` with the
-same `--reference-root`. Amazon Books/Movies is no longer in the default registry.
-After preparing Book/Movie, rerun preflight. Do not rerun the completed Amazon
-recommendation training just to add the third asset set.
+The Amazon tasks retain their existing processing and asset locations. Prepare
+and audit the original Douban source independently, without allocating the GPU:
 
-Run the three seed-42 jobs sequentially on one GPU. Training is resumable. After
+```bash
+python experiments/prepare_gencdr_douban.py --action all
+```
+
+This downloads a hash-pinned publisher archive and reports discrepancies with
+GenCDR Table 1. It does not create SIR training splits or claim exact paper
+alignment. A two-task preflight success does not certify the third task. The
+removed GenCDSR task and Amazon Books/Movies are not substitutes.
+
+Run the two active seed-42 jobs sequentially on one GPU. Training is resumable. After
 each checkpoint is complete, the runner tunes score fusion on validation for
 `none`, `log_softmax`, and `zscore`, then evaluates the held-out test split once.
 
@@ -275,9 +286,9 @@ artifacts/text_cdr_v4/benchmark_reports/gencdr_three_datasets_seed42.json
 artifacts/text_cdr_v4/benchmark_reports/gencdr_three_datasets_seed42.csv
 ```
 
-The default three-pair run is one directional, following the repository's
-Sports-to-Clothing convention. A bidirectional table requires six separately
-configured target-domain runs.
+The report filenames above are legacy names; inspect the actual dataset keys.
+The active run is one directional. Reporting both target domains requires
+separately configured reverse-direction runs.
 
 ## Verify
 

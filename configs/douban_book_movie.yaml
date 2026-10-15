@@ -1,7 +1,8 @@
+# Douban Book-Movie only; processed assets pending protocol verification.
 dataset:
   source_domain: Book
   target_domain: Movie
-  processed_dir: data/processed/gencdsr_book_movie
+  processed_dir: data/processed/douban_book_movie
 embedding:
   provider: qwen3_local
   model: Qwen/Qwen3-Embedding-8B
@@ -9,15 +10,15 @@ embedding:
   batch_size: 1
   max_retries: 5
   retry_initial_seconds: 2.0
-  input_path: data/processed/gencdsr_book_movie/item_texts.jsonl
-  output_dir: artifacts/embeddings/qwen3_8b/gencdsr_book_movie
+  input_path: data/processed/douban_book_movie/item_texts.jsonl
+  output_dir: artifacts/embeddings/qwen3_8b/douban_book_movie
   device: cuda
   max_sequence_length: 8192
   model_path_env: QWEN3_EMBEDDING_MODEL_PATH
 tokenizer:
-  embeddings_path: artifacts/embeddings/qwen3_8b/gencdsr_book_movie/text_embeddings.pt
-  item_texts_path: data/processed/gencdsr_book_movie/item_texts.jsonl
-  output_dir: artifacts/tokenizer/qwen3_8b/gencdsr_book_movie
+  embeddings_path: artifacts/embeddings/qwen3_8b/douban_book_movie/text_embeddings.pt
+  item_texts_path: data/processed/douban_book_movie/item_texts.jsonl
+  output_dir: artifacts/tokenizer/qwen3_8b/douban_book_movie
   input_dim: 768
   hidden_dim: 128
   codebook_size: 512
@@ -33,9 +34,9 @@ tokenizer:
   min_level_utilization: 0.1
   seed: 42
 recommendation:
-  processed_dir: data/processed/gencdsr_book_movie
-  tokenizer_dir: artifacts/tokenizer/qwen3_8b/gencdsr_book_movie
-  output_dir: artifacts/recommendation/qwen3_8b/gencdsr_book_movie
+  processed_dir: data/processed/douban_book_movie
+  tokenizer_dir: artifacts/tokenizer/qwen3_8b/douban_book_movie
+  output_dir: artifacts/recommendation/qwen3_8b/douban_book_movie
   hidden_dim: 128
   reasoning_steps: 3
   prefix_length: 4
