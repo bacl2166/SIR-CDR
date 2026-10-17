@@ -299,6 +299,10 @@ This is an independent batch-4 experiment (accumulation 4, eval batch 4,
 checkpointing off), with evaluation catalog reuse and device-side loss logging.
 All settings/code remain signed; old checkpoints are preserved and not silently
 resumed. See [server commands and scientific boundaries](docs/llm_efficiency_zh.md).
+Final evaluation now uses a checkpoint-bound CPU catalog snapshot and FP32 GPU
+scoring, with exact independent validation-score verification before testing.
+Completed training is reused. Old native scoring reports remain available.
+See [evaluation recovery and disclosure](docs/llm_snapshot_evaluation_zh.md).
 
 ## Verify
 

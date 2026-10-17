@@ -55,7 +55,7 @@ class ThroughputTests(unittest.TestCase):
             self.assertEqual(len(commands), 2)
             self.assertIn('train', commands[0])
             self.assertIn('test', commands[1])
-            self.assertTrue(any('tune_llm_parameters.py' in part for part in commands[1]))
+            self.assertTrue(any('recover_llm_evaluation.py' in part for part in commands[1]))
             with self.assertRaises(ValueError):
                 runtime_config('douban_book_movie', root)
 
@@ -67,11 +67,11 @@ class ThroughputTests(unittest.TestCase):
                 run_pair(config, root / 'runtime.yaml', root / 'tuning')
             commands = [call.args[0] for call in invoke.call_args_list]
             actions = [cmd[cmd.index('--action') + 1] for cmd in commands]
-            self.assertEqual(actions, ['train', 'all', 'sweep', 'verify', 'test'])
+            self.assertEqual(actions, ['train', 'all'])
+            self.assertTrue(any('recover_llm_evaluation.py' in part for part in commands[1]))
 
     def test_actual_fast_train_tune_verify_test_and_completed_reuse(self):
-        from experiments.tune_llm_fusion import run as fusion
-        from experiments.tune_llm_parameters import run as parameters
+        from experiments.recover_llm_evaluation import recover_stage
         with tempfile.TemporaryDirectory() as d, patch(
                 'cdr_framework.llm_reasoner.QwenLatentReasoner.from_pretrained', offline_backbone):
             root = Path(d)
@@ -82,10 +82,10 @@ class ThroughputTests(unittest.TestCase):
                 action = command[command.index('--action') + 1]
                 if command[1].endswith('run_llm_cdr.py'):
                     llm_training.train(config, torch.device('cpu'))
-                elif command[1].endswith('tune_llm_fusion.py'):
-                    fusion(config, torch.device('cpu'), tuning, action)
                 else:
-                    parameters(config, tuning, Path(str(tuning) + '_parameters'), action, torch.device('cpu'))
+                    stages = ('cache', 'verify', 'test') if action == 'all' else (action,)
+                    for stage in stages:
+                        recover_stage(config, Path(str(tuning) + '_snapshot_eval_v1'), stage, torch.device('cpu'))
             with patch('experiments.run_llm_fast._run', side_effect=execute):
                 run_pair(config, root / 'runtime.yaml', tuning, device='cpu')
                 test_path = config.output_dir / 'test.json'

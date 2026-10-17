@@ -42,26 +42,15 @@ def _run(command):
 
 
 def run_pair(config, path, tuning, *, device='cuda'):
-    """Failure stops the pipeline; existing test reservations use strict legacy locks."""
+    """Reuse completed training; exact snapshot verification gates the final test."""
     python = sys.executable
     cli = [python, str(ROOT / 'experiments/run_llm_cdr.py'), '--config', str(path)]
-    parameter_cli = [python, str(ROOT / 'experiments/tune_llm_parameters.py'), '--config', str(path),
-                     '--cache-root', str(tuning), '--output', str(tuning) + '_parameters']
     print(f'=== TRAIN {config.output_dir} ===', flush=True)
     _run(cli + ['--action', 'train', '--device', device])
-    if (config.output_dir / 'test.json').exists():
-        # Test action verifies the checkpoint, cache, selected setting, report and
-        # verification identities before reusing a completed result. Failed or
-        # incompatible reservations remain errors, never silently overwritten.
-        _run(parameter_cli + ['--action', 'test', '--device', device])
-        return
-    print('=== VALIDATION TUNING ===', flush=True)
-    _run([python, str(ROOT / 'experiments/tune_llm_fusion.py'), '--config', str(path),
-          '--output', str(tuning), '--action', 'all', '--device', device])
-    _run(parameter_cli + ['--action', 'sweep', '--device', 'cpu'])
-    _run(parameter_cli + ['--action', 'verify', '--device', device])
-    print('=== FINAL TEST ===', flush=True)
-    _run(parameter_cli + ['--action', 'test', '--device', device])
+    print('=== SNAPSHOT VALIDATION AND FINAL TEST ===', flush=True)
+    action = 'test' if (config.output_dir / 'test.json').exists() else 'all'
+    _run([python, str(ROOT / 'experiments/recover_llm_evaluation.py'), '--config', str(path),
+          '--output', str(tuning) + '_snapshot_eval_v1', '--action', action, '--device', device])
 
 
 def main():
