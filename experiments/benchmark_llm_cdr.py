@@ -122,7 +122,7 @@ def main():
     configs = candidate_configs(config, args.batch_sizes, args.checkpointing)
     environment = {'device': str(device), 'torch': torch.__version__, 'cpu_threads': torch.get_num_threads(),
                    'gpu': torch.cuda.get_device_name(device) if device.type == 'cuda' else None}
-    report = {'schema': 'llm-throughput-v1', 'benchmark_sha256': _sha256(__file__),
+    report = {'schema': 'llm-throughput-v1', 'benchmark_sha256': _sha256(Path(__file__)),
               'environment': environment, 'results': [],
               'note': 'Performance probe only. No validation selection, final metrics or training checkpoint.'}
     args.output.parent.mkdir(parents=True, exist_ok=True)

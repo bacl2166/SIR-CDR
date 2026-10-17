@@ -139,7 +139,7 @@ def _child(args):
         raise RuntimeError('Verification refers to another cache')
     device = torch.device(args.device)
     report = {'profile': args.profile, 'training_identity': identity,
-              'checkpoint_sha256': _sha256(checkpoint), 'diagnostic_sha256': _sha256(__file__),
+              'checkpoint_sha256': _sha256(checkpoint), 'diagnostic_sha256': _sha256(Path(__file__)),
               'policy': {'dtype': config.llm_dtype if args.profile == 'native' else 'float32',
                          'deterministic_algorithms': args.profile == 'controlled',
                          'math_sdpa_only': args.profile == 'controlled',
