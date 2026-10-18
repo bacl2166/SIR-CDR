@@ -1,0 +1,12 @@
+# Douban Book → Movie implementation plan
+
+> Implement inline with executing-plans, following the previously documented Douban asset design and the user's instruction to start the third task.
+
+Scope: a runnable, separately identified common-user Douban experiment, preserving the first two runs. This does not claim the authors' unavailable final split.
+
+- [x] Add `cdr_framework/datasets/douban.py`: verified archive, UID joins, Amazon-compatible chronological protocol, audited exclusions, training-only book tags/static movie text, complete reproducible processed files and protocol hashes.
+- [x] Add focused synthetic tests for UID identity, temporal histories/holdouts, repeat handling, text provenance and output reuse. Real archive conversion completed after applying the user's split-alignment correction: 918465/1855/1858 rows.
+- [x] Add a batch-8/accumulation-2 Qwen3-0.6B preset and `experiments/run_douban.py`: download/convert, embedding, tokenizer with explicit Book/Movie domains, prepared runtime config, strict training and existing snapshot validation/test workflow. All steps are resumable or fail on identity conflicts.
+- [x] New preprocessing/orchestration checks passed (six targeted cases, including an Amazon differential check with a repeated test positive); independent static review found no substantive issues. Status CLI verified on real processed assets. Publish only Douban files; the interrupted Phones exploratory files remain untracked. GPU preparation/training/testing remain server-side work.
+
+Ruling (user steering): align splitting with the existing two Amazon tasks. Keep all valid interactions including repeats; minimum five dated events per domain; shared users; sort by timestamp/original item ID with raw row as exact-tie fallback; last/penultimate target items held out before sample eligibility checks; source history strictly earlier calendar day. Full target catalog and full seen-history masking; encoder truncation stays 50. Repeated holdout positives are neither removed nor replaced and their masked count is disclosed. Book text uses only source events visible in a training row and drops damaged label tokens, otherwise explicit ID fallback. Movie whitelist excludes aggregated tag/rating/numraters. No arbitrary paper-count matching or GenCDSR data. A differential test compares generated samples against Amazon's existing build_temporal_splits.

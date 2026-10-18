@@ -98,8 +98,8 @@ def prepare_pair(
 ) -> None:
     if name == "douban_book_movie":
         raise ValueError(
-            "Douban Book-Movie final protocol is pending. First run "
-            "experiments/prepare_gencdr_douban.py --action all for raw asset auditing; "
+            "Douban Book-Movie uses a separate auditable workflow. Run "
+            "experiments/run_douban.py --action prepare; "
             "do not substitute Amazon or GenCDSR assets. See docs/gencdr_douban_alignment_zh.md"
         )
     config_path = ROOT / ASSET_CONFIGS[name]
@@ -169,7 +169,7 @@ def prepare_pair(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Prepare the active Amazon tasks; Douban Book-Movie raw data has a separate audit entry."
+        description="Prepare the active Amazon tasks; use run_douban.py for the Douban workflow."
     )
     parser.add_argument("--pairs", nargs="+", choices=tuple(ASSET_CONFIGS))
     parser.add_argument("--device", default="cuda")

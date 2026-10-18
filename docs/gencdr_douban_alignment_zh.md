@@ -1,5 +1,10 @@
 # 第三组以 GenCDR 为基线：Douban 资产与待解决差异
 
+**2026-10-18 更新：** 已实现独立 Douban 转换与推荐运行入口，划分规则与现有两组
+Amazon 逐字段对照，保留重复交互。运行步骤及实际规模见
+[Douban 运行说明](douban_execution_zh.md)。下文的“尚未实现”描述保留为此前原始审计阶段的记录；
+作者最终数据快照未对齐这一限制仍然成立。
+
 完整后续方案及整体实验可比性结论见
 [Douban Book–Movie 资产设计](douban_book_movie_asset_design_zh.md)。
 

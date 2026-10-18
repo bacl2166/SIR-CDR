@@ -304,6 +304,15 @@ scoring, with exact independent validation-score verification before testing.
 Completed training is reused. Old native scoring reports remain available.
 See [evaluation recovery and disclosure](docs/llm_snapshot_evaluation_zh.md).
 
+## Third task: Douban Book to Movie
+
+Use `python -u experiments/run_douban.py --action all` to prepare the verified
+Douban archive, generate 8B embeddings and semantic IDs, then train Qwen3-0.6B
+and run strictly verified validation/test evaluation. Splitting follows the two
+Amazon tasks, including duplicate retention and temporal source visibility.
+This is a common-user protocol; authors' final GenCDR split alignment remains
+unverified. See [Douban server workflow](docs/douban_execution_zh.md).
+
 ## Verify
 
 ```bash

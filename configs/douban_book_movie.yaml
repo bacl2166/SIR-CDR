@@ -1,4 +1,4 @@
-# Douban Book-Movie only; processed assets pending protocol verification.
+# Douban common-protocol Book -> Movie; same leave-last-out rules as Amazon.
 dataset:
   source_domain: Book
   target_domain: Movie
@@ -7,13 +7,13 @@ embedding:
   provider: qwen3_local
   model: Qwen/Qwen3-Embedding-8B
   dimension: 768
-  batch_size: 1
+  batch_size: 2
   max_retries: 5
   retry_initial_seconds: 2.0
   input_path: data/processed/douban_book_movie/item_texts.jsonl
   output_dir: artifacts/embeddings/qwen3_8b/douban_book_movie
   device: cuda
-  max_sequence_length: 8192
+  max_sequence_length: 512
   model_path_env: QWEN3_EMBEDDING_MODEL_PATH
 tokenizer:
   embeddings_path: artifacts/embeddings/qwen3_8b/douban_book_movie/text_embeddings.pt
