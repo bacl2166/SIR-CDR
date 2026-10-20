@@ -313,6 +313,13 @@ Amazon tasks, including duplicate retention and temporal source visibility.
 This is a common-user protocol; authors' final GenCDR split alignment remains
 unverified. See [Douban server workflow](docs/douban_execution_zh.md).
 
+## Reverse-direction assets
+
+Reverse assets can be prepared independently while forward training continues:
+`python -u experiments/prepare_reverse_assets.py --action cpu --workers 3 --cpu-tokenizer`.
+GPU completion is a separate serial stage that refuses a busy GPU. See
+[reverse asset preparation](docs/reverse_assets_parallel_zh.md).
+
 ## Verify
 
 ```bash
