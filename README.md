@@ -331,3 +331,11 @@ python -m unittest discover -s tests -v
 ```bash
 python experiments/run_synthetic.py
 ```
+
+## GenCDR shared-data baseline entry
+
+For new, isolated leave-one-out assets and Recall@10 checkpoint selection, see
+[GenCDR shared protocol (Chinese)](docs/gencdr_shared_protocol_zh.md).
+Run `python experiments/run_gencdr_shared.py --action convert`, then `--action prepare`,
+then `--action run`. This is a common-protocol reproduction, not a verified copy
+of the author's unavailable final splits. Existing experiment entry points retain their original assets.
