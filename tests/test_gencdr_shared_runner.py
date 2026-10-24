@@ -8,6 +8,40 @@ from experiments.run_gencdr_shared import paths, model_config, validate_asset_ch
 
 
 class SharedRunnerTests(unittest.TestCase):
+    def test_validation_phase_never_dispatches_test(self):
+        from unittest.mock import patch
+        from experiments.run_gencdr_shared import batch_workflow
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            commands = []
+            with patch('experiments.run_gencdr_shared.verify_ready'), \
+                 patch('experiments.run_gencdr_shared.execute', side_effect=commands.append), \
+                 patch('experiments.run_gencdr_shared.validate_runtime'):
+                batch_workflow(root, 'sports_to_clothing', 'validate', 42, 'cuda:0', 'paper-v1')
+            self.assertEqual([c[c.index('--action')+1] for c in commands], ['cache', 'verify'])
+
+    def test_batch_test_requires_freeze_before_dispatch(self):
+        from unittest.mock import patch
+        from experiments.run_gencdr_shared import batch_workflow
+        with tempfile.TemporaryDirectory() as folder:
+            with patch('experiments.run_gencdr_shared.verify_ready'), \
+                 patch('experiments.run_gencdr_shared.validate_runtime'), \
+                 patch('experiments.run_gencdr_shared.execute') as execute:
+                with self.assertRaises((RuntimeError, FileNotFoundError)):
+                    batch_workflow(Path(folder), 'sports_to_clothing', 'test', 42, 'cuda:0', 'paper-v1')
+                execute.assert_not_called()
+
+    def test_batch_paths_isolate_runs_and_reject_traversal(self):
+        from experiments.run_gencdr_shared import runtime_path
+        root = Path('/workspace').resolve()
+        cfg = model_config(root, 'sports_to_clothing', 42, batch_id='paper-v1')
+        self.assertEqual(cfg.output_dir, root/'artifacts/llm_cdr_v1/gencdr-shared-loo-v1/paper-v1/sports_to_clothing/seed42')
+        self.assertEqual(runtime_path(root, 'sports_to_clothing', 42, 'paper-v1'),
+                         root/'configs/runtime/gencdr-shared-loo-v1/paper-v1/sports_to_clothing_seed42.yaml')
+        for value in ('../bad', '', '/tmp', 'a/b'):
+            with self.assertRaises(ValueError):
+                model_config(root, 'sports_to_clothing', 42, batch_id=value)
+
     def test_new_configs_are_isolated_and_select_recall_without_changing_core(self):
         for pair in ('sports_to_clothing', 'phones_to_electronics', 'douban_book_movie', 'douban_movie_book'):
             root = Path('/workspace').resolve()

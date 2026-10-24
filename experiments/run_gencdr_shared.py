@@ -41,12 +41,16 @@ def convert(root, pair, bundle=None, training_examples='all-prefixes'):
                         training_examples=training_examples)
 
 
-def model_config(root, pair, seed):
+def model_config(root, pair, seed, batch_id=None):
     from cdr_framework.llm_config import LLMCDRConfig
     p = paths(root, pair)
     # Unified declared defaults, independent of previous pair-specific tuning.
+    output = Path(root) / 'artifacts/llm_cdr_v1' / SCHEMA
+    if batch_id is not None:
+        from cdr_framework.experiment_control import validate_batch_id
+        output /= validate_batch_id(batch_id)
     return LLMCDRConfig(processed_dir=p['processed'].resolve(), tokenizer_dir=p['tokenizer'].resolve(),
-        output_dir=(Path(root) / 'artifacts/llm_cdr_v1' / SCHEMA / pair / f'seed{seed}').resolve(),
+        output_dir=(output / pair / f'seed{seed}').resolve(),
         llm_model_name='Qwen/Qwen3-0.6B', llm_revision='c1899de289a04d12100db370d81485cdf75e47ca',
         llm_gradient_checkpointing=False, batch_size=8, evaluation_batch_size=8,
         gradient_accumulation_steps=2, selection_metric='HR@10',
@@ -56,8 +60,11 @@ def model_config(root, pair, seed):
         fusion_normalization='none', rerank_candidates=500, decode_chunk_size=128, seed=seed)
 
 
-def runtime_path(root, pair, seed):
+def runtime_path(root, pair, seed, batch_id=None):
     p = paths(root, pair)['runtime']
+    if batch_id is not None:
+        from cdr_framework.experiment_control import validate_batch_id
+        p = p.parent / validate_batch_id(batch_id) / p.name
     return p.with_name(f'{pair}_seed{seed}.yaml')
 
 
@@ -177,6 +184,48 @@ def execute(command):
     subprocess.run(list(map(str, command)), cwd=ROOT, env=environment, check=True)
 
 
+def validate_runtime(root, pair, seed, batch_id):
+    from experiments.run_llm_cdr import absolute_config
+    from cdr_framework.llm_training import config_payload
+    runtime = runtime_path(root, pair, seed, batch_id)
+    if config_payload(absolute_config(runtime)) != config_payload(model_config(root, pair, seed, batch_id)):
+        raise RuntimeError('Runtime identity differs from batch declaration')
+    return runtime
+
+
+def batch_workflow(root, pair, action, seed, device, batch_id):
+    """Phase-specific worker. GPU admission belongs to the six-task controller."""
+    from cdr_framework.experiment_control import validate_batch_id
+    from experiments.recover_llm_evaluation import operation_lock
+    validate_batch_id(batch_id)
+    if action not in ('train', 'validate', 'test', 'runtime', 'smoke'):
+        raise ValueError('Unsupported batch action')
+    verify_ready(root, pair)
+    config = model_config(root, pair, seed, batch_id)
+    runtime = runtime_path(root, pair, seed, batch_id)
+    tuning = Path(root)/'artifacts/tuning'/SCHEMA/batch_id/pair/f'seed{seed}'
+    with operation_lock(Path(root)/'artifacts/experiment_control'/SCHEMA/batch_id/'locks'/f'{pair}_seed{seed}'):
+        if action == 'runtime':
+            from experiments.run_llm_cdr import prepare_model
+            prepare_model(config, runtime)
+            return
+        validate_runtime(root, pair, seed, batch_id)
+        if action in ('train', 'smoke'):
+            execute([sys.executable, ROOT/'experiments/run_llm_cdr.py', '--action', action,
+                     '--config', runtime, '--device', device])
+        elif action == 'validate':
+            if (config.output_dir/'test.json').exists():
+                raise RuntimeError('Test already reserved; validation is closed')
+            for stage in ('cache', 'verify'):
+                execute([sys.executable, ROOT/'experiments/recover_llm_evaluation.py', '--action', stage,
+                         '--config', runtime, '--output', tuning, '--device', device])
+        else:
+            from cdr_framework.experiment_control import verify_freeze
+            verify_freeze(root, batch_id)
+            execute([sys.executable, ROOT/'experiments/recover_llm_evaluation.py', '--action', 'test',
+                     '--config', runtime, '--output', tuning, '--device', device])
+
+
 def workflow(root, pair, action, seed, device, bundle=None, training_examples='all-prefixes'):
     from experiments.recover_llm_evaluation import operation_lock
     p = paths(root, pair)
@@ -230,7 +279,8 @@ def workflow(root, pair, action, seed, device, bundle=None, training_examples='a
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--action', choices=('convert', 'prepare', 'preflight', 'run', 'all', 'status', 'embedding', 'tokenize'), required=True)
+    parser.add_argument('--action', choices=('convert', 'prepare', 'preflight', 'run', 'all', 'status', 'embedding', 'tokenize', 'runtime', 'smoke', 'train', 'validate', 'test'), required=True)
+    parser.add_argument('--batch-id')
     parser.add_argument('--pairs', nargs='+', choices=tuple(PAIRS), default=list(DEFAULT_PAIRS))
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', default='cuda')
@@ -239,6 +289,14 @@ def main():
     parser.add_argument('--root', type=Path, default=ROOT, help=argparse.SUPPRESS)
     parser.add_argument('--asset-worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.batch_id is not None:
+        if args.action not in ('runtime', 'smoke', 'train', 'validate', 'test') or args.asset_worker:
+            parser.error('Batch runs require a phase-specific action')
+        for pair in args.pairs:
+            batch_workflow(args.root.resolve(), pair, args.action, args.seed, args.device, args.batch_id)
+        return
+    if args.action in ('runtime', 'smoke', 'train', 'validate', 'test'):
+        parser.error('Phase-specific actions require --batch-id')
     if args.bundle and len(args.pairs) != 1: parser.error('--bundle requires exactly one pair')
     if len(args.pairs) != len(set(args.pairs)): parser.error('Duplicate tasks')
     if args.asset_worker:
