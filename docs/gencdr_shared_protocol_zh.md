@@ -1,5 +1,13 @@
 # GenCDR 共同数据协议与独立训练入口
 
+## 六方向、三种子的论文外部参照实验
+
+不重新运行GenCDR时，使用新增 `experiments/run_gencdr_six.py`，按
+[六方向服务器执行手册](six_direction_server_runbook_zh.md) 操作。
+该入口在同一公开协议资产上独立运行18个SIR-CDR任务，先完成全部验证选参及精确核验，
+冻结后才统一测试。GPU须人工确认白名单；代码经GitHub提交后由用户在服务器拉取执行。
+下文旧的单任务 `--action run` 会直接进入测试，不适用于这项18任务冻结实验。
+
 ## 定位：不是论文原表数据的完整复现
 
 上游来源：<https://github.com/hupeiyu21/GenCDR>，公开划分实现

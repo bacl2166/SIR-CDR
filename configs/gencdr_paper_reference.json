@@ -1,0 +1,15 @@
+{
+  "source": "GenCDR, Table 2, published results",
+  "url": "https://arxiv.org/abs/2511.08006",
+  "strictly_comparable": false,
+  "paper_alignment_verified": false,
+  "disclosure": "GenCDR values are quoted from the paper. SIR-CDR uses independently reconstructed public leave-one-out rules; unavailable author population, final splits and per-user predictions prevent a controlled direct comparison. Gaps are descriptive only; no significance test is performed against published GenCDR values.",
+  "targets": {
+    "Sports": {"R@5": 0.0274, "N@5": 0.0261, "R@10": 0.0403, "N@10": 0.0262},
+    "Clothing": {"R@5": 0.0181, "N@5": 0.0167, "R@10": 0.0265, "N@10": 0.0203},
+    "Phones": {"R@5": 0.0436, "N@5": 0.0411, "R@10": 0.0621, "N@10": 0.0512},
+    "Electronics": {"R@5": 0.0241, "N@5": 0.0235, "R@10": 0.0342, "N@10": 0.0283},
+    "Books": {"R@5": 0.0192, "N@5": 0.0187, "R@10": 0.0237, "N@10": 0.0212},
+    "Movies": {"R@5": 0.1713, "N@5": 0.1215, "R@10": 0.1971, "N@10": 0.1275}
+  }
+}

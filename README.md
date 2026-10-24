@@ -1,5 +1,15 @@
 # SIR-CDR: Text-only Cross-domain Recommendation
 
+## Six-direction paper-reference experiment
+
+For the complete Qwen3-0.6B model on Sports/Clothing, Phones/Electronics and
+Douban Book/Movie in both directions, use the
+[manual server runbook](docs/six_direction_server_runbook_zh.md).
+`experiments/run_gencdr_six.py` requires a manually approved GPU whitelist,
+runs seeds 42/43/44, and freezes all 18 validation decisions before releasing
+final testing. GenCDR is a published external reference, not a verified matched
+comparison. All server updates are delivered through GitHub.
+
 ## Optional Qwen user-side latent reasoning
 
 The `llm-cdr-v1` path reuses the Qwen3-Embedding-8B assets. The active Sports/Clothing

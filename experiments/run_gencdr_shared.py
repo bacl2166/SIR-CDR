@@ -221,7 +221,7 @@ def batch_workflow(root, pair, action, seed, device, batch_id):
                          '--config', runtime, '--output', tuning, '--device', device])
         else:
             from cdr_framework.experiment_control import verify_freeze
-            verify_freeze(root, batch_id)
+            verify_freeze(root, batch_id, pair, seed)
             execute([sys.executable, ROOT/'experiments/recover_llm_evaluation.py', '--action', 'test',
                      '--config', runtime, '--output', tuning, '--device', device])
 

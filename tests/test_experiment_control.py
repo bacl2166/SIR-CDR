@@ -6,7 +6,109 @@ import unittest
 from cdr_framework import experiment_control as ec
 
 
+def validation_fixture(root, batch='paper-v1'):
+    """Full file graph; only expensive existing checkpoint/asset validation is mocked by callers."""
+    from experiments.run_gencdr_shared import model_config, runtime_path, paths
+    from cdr_framework.llm_training import config_payload
+    import yaml
+    import torch
+    declaration = {'commit': 'fixture-commit', 'batch_id': batch, 'pairs': list(ec.SIX_PAIRS),
+                   'seeds': list(ec.SEEDS), 'gpus': [0], 'paper_alignment_verified': False}
+    ec.write_json_atomic(ec.control_root(root,batch)/'experiment_manifest.json', declaration)
+    for pair in ec.SIX_PAIRS:
+        p = paths(root,pair)
+        for file in (p['processed']/'shared_manifest.json',p['control']/'ready.json'):
+            ec.write_json_atomic(file, {'fixture':True})
+        for seed in ec.SEEDS:
+            cfg=model_config(root,pair,seed,batch)
+            runtime=runtime_path(root,pair,seed,batch); runtime.parent.mkdir(parents=True,exist_ok=True)
+            runtime.write_text(yaml.safe_dump({'llm_recommendation':config_payload(cfg)}),encoding='utf-8')
+            identity={'config':config_payload(cfg), 'fixture':True}
+            cfg.output_dir.mkdir(parents=True,exist_ok=True)
+            torch.save({'identity':identity,'epoch':1,'validation':{'HR@10':.2}},cfg.output_dir/'best_model.pt')
+            ec.write_json_atomic(cfg.output_dir/'manifest.json',{'identity':identity,'complete':True,
+                                 'epochs_completed':1,'best_validation':{'HR@10':.2}})
+            tuning=root/'artifacts/tuning'/ec.SCHEMA/batch/pair/f'seed{seed}'
+            tuning.mkdir(parents=True,exist_ok=True)
+            for name in ('item_states.pt','validation_scores.pt'): (tuning/name).write_bytes(b'fixture')
+            evaluation={'training_identity':identity,'checkpoint_sha256':ec.file_sha(cfg.output_dir/'best_model.pt'),
+                'source_config':config_payload(cfg),'completed_manifest_sha256':ec.file_sha(cfg.output_dir/'manifest.json'),
+                'runtime':{'uuid':'GPU-a','device':'cuda:0'}}
+            search={'identity':evaluation,'complete':True,'split':'validation','snapshot_sha256':ec.file_sha(tuning/'item_states.pt'),
+                    'cache_sha256':ec.file_sha(tuning/'validation_scores.pt'),'best':{'setting':{'weight':.5},'metrics':{'N@10':.1}}}
+            ec.write_json_atomic(tuning/'search.json',search)
+            binding={'identity':evaluation,'snapshot_sha256':search['snapshot_sha256'],
+                     'cache_sha256':search['cache_sha256'],'search_sha256':ec.file_sha(tuning/'search.json')}
+            ec.write_json_atomic(tuning/'verification.json',{'binding':binding,'raw_scores_equal':True,
+                                 'rankings_equal':True,'verified_all_metrics':True})
+
+
+def fixture_checkpoint(config, path):
+    import torch
+    state=torch.load(path,weights_only=True)
+    return state,state['identity']
+
+
 class ControlTests(unittest.TestCase):
+    def test_summary_preserves_all_seeds_and_uses_sample_standard_deviation(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); validation_fixture(root)
+            with patch('experiments.run_gencdr_shared.verify_ready'), \
+                 patch('experiments.tune_llm_fusion.validate_checkpoint',side_effect=fixture_checkpoint), \
+                 patch.object(ec,'git_identity',return_value={'commit':'fixture-commit','status_porcelain':''}):
+                frozen=ec.freeze_batch(root,'paper-v1')
+                for job in frozen['jobs']:
+                    score={42:.1,43:.2,44:.3}[job['seed']]
+                    ec.write_json_atomic(root/job['output']/'test.json',
+                        {'state':'complete','split':'test','recovery_identity':job['test_identity'],
+                         'metrics':{k:score for k in ('R@5','N@5','R@10','N@10')}})
+                result=ec.summarize_batch(root,'paper-v1')
+                self.assertEqual(len(result['per_seed']),18)
+                self.assertAlmostEqual(result['directions'][0]['metrics']['R@5']['mean'],.2)
+                self.assertAlmostEqual(result['directions'][0]['metrics']['R@5']['std'],.1)
+                self.assertFalse(result['strictly_comparable'])
+                self.assertEqual(result['directions'][0]['target_domain'],'Clothing')
+                test=root/frozen['jobs'][0]['output']/'test.json'
+                invalid=ec.read_json(test); invalid['recovery_identity']={}; ec.write_json_atomic(test,invalid)
+                with self.assertRaises(RuntimeError): ec.summarize_batch(root,'paper-v1')
+
+    def test_embedding_reuse_requires_exact_text_and_recipe_identity(self):
+        identity={'input_sha256':'texts','model_revision':'a'*40,'model_config_sha256':'cfg',
+                  'dimension':768,'normalized':True,'max_sequence_length':512,'item_count':2}
+        self.assertTrue(ec.can_reuse_embedding(identity,dict(identity)))
+        for key in identity:
+            changed=dict(identity); changed[key]='different'
+            self.assertFalse(ec.can_reuse_embedding(identity,changed))
+        self.assertFalse(ec.can_reuse_embedding({},{}))
+
+    def test_freeze_requires_all_eighteen_and_detects_tamper(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); validation_fixture(root)
+            with patch('experiments.run_gencdr_shared.verify_ready'), \
+                 patch('experiments.tune_llm_fusion.validate_checkpoint',side_effect=fixture_checkpoint), \
+                 patch.object(ec,'git_identity',return_value={'commit':'fixture-commit','status_porcelain':''}):
+                frozen=ec.freeze_batch(root,'paper-v1')
+                self.assertEqual(len(frozen['jobs']),18)
+                self.assertEqual(ec.freeze_batch(root,'paper-v1'),frozen)
+                self.assertEqual(ec.verify_freeze(root,'paper-v1'),frozen)
+                from experiments.run_gencdr_shared import model_config
+                (model_config(root,'sports_to_clothing',42,'paper-v1').output_dir/'best_model.pt').write_bytes(b'tamper')
+                with self.assertRaises(RuntimeError): ec.verify_freeze(root,'paper-v1')
+
+    def test_partial_or_unverified_batch_cannot_freeze(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); validation_fixture(root)
+            report=root/'artifacts/tuning'/ec.SCHEMA/'paper-v1/douban_movie_book/seed44/verification.json'
+            report.unlink()
+            with patch('experiments.run_gencdr_shared.verify_ready'), \
+                 patch('experiments.tune_llm_fusion.validate_checkpoint',side_effect=fixture_checkpoint), \
+                 patch.object(ec,'git_identity',return_value={'commit':'fixture-commit','status_porcelain':''}):
+                with self.assertRaises((FileNotFoundError,RuntimeError)): ec.freeze_batch(root,'paper-v1')
+            self.assertFalse((ec.control_root(root,'paper-v1')/'validation_freeze.json').exists())
+
     def test_read_only_environment_reports_dirty_tree_without_exposing_environment(self):
         from unittest.mock import patch
         from subprocess import CompletedProcess
