@@ -117,6 +117,15 @@ def can_reuse_embedding(source, target):
     return all(k in source and k in target and source[k]==target[k] for k in keys)
 
 
+def require_embedding_recipe(manifest,expected):
+    if not can_reuse_embedding(manifest,expected): raise RuntimeError('Embedding pinned recipe differs')
+    count=manifest['item_count']; batch=manifest.get('batch_size',0)
+    if (not isinstance(count,int) or count<=0 or not isinstance(batch,int) or batch<=0
+            or manifest.get('completed_batches')!=(count+batch-1)//batch
+            or manifest.get('matrix_shape')!=[count+1,expected['dimension']]):
+        raise RuntimeError('Embedding is incomplete or rows differ from ordered catalog')
+
+
 def git_identity(root, run=subprocess.run):
     def git(*args):
         return run(['git', *args], cwd=root, text=True, capture_output=True, check=True, timeout=20).stdout.strip()
@@ -134,6 +143,26 @@ def host_resources():
             memory[key] = int(raw.strip().split()[0])*1024
     return {'cpu_count': os.cpu_count(), 'load': list(os.getloadavg()) if hasattr(os, 'getloadavg') else None,
             'memory': memory, 'platform': platform.platform()}
+
+
+def nearest_existing(path):
+    path=Path(path).resolve()
+    while not path.exists() and path!=path.parent: path=path.parent
+    return path
+
+
+def assert_storage_budget(workspace,cache,cache_required,output_required):
+    """Reserve combined bytes when cache and artifacts share a filesystem."""
+    budgets={}
+    for path,required in ((workspace,output_required),(cache,cache_required)):
+        actual=nearest_existing(path); key=actual.stat().st_dev
+        entry=budgets.setdefault(key,{'path':str(actual),'required_bytes':0})
+        entry['required_bytes']+=required
+    for entry in budgets.values():
+        entry['free_bytes']=shutil.disk_usage(entry['path']).free
+        if entry['free_bytes']<entry['required_bytes']:
+            raise RuntimeError(f'Insufficient disk budget: {entry}')
+    return list(budgets.values())
 
 
 def capture_environment(root, personal_data_root, requested_gpus, run=subprocess.run):
@@ -160,15 +189,37 @@ def capture_environment(root, personal_data_root, requested_gpus, run=subprocess
         except OSError as error: errors.append('Filesystem check: '+str(error))
     cuda = torch.cuda.is_available()
     if not cuda: errors.append('PyTorch CUDA unavailable')
+    driver={}; capabilities={}
+    try:
+        result=run(['nvidia-smi','--query-gpu=index,compute_cap,driver_version','--format=csv,noheader,nounits'],
+                   text=True,capture_output=True,check=True,timeout=20)
+        for row in csv.reader(result.stdout.strip().splitlines(),skipinitialspace=True):
+            if len(row)!=3: raise ValueError('Malformed capability/driver row')
+            index=int(row[0]); capabilities[index]=float(row[1]); driver[str(index)]=row[2]
+    except (OSError,ValueError,subprocess.SubprocessError) as error:
+        errors.append('Driver/capability unavailable: '+str(error))
+    bf16=bool(capabilities) and all(capabilities.get(i,0)>=8 for i in requested_gpus)
+    if not bf16: errors.append('Approved GPU BF16 capability not established')
     if git.get('status_porcelain'): errors.append('Git working tree is dirty')
     if resources['memory'].get('MemAvailable', 0) < 16*2**30: errors.append('Need at least 16 GiB available host RAM')
     if not personal_data_root.is_dir() or not os.access(personal_data_root, os.W_OK): errors.append('Personal data directory unavailable')
     if shutil.disk_usage(root).free < 60*2**30: errors.append('Need at least 60 GiB initial free workspace disk')
     admission.update(production_ready=not errors and bool(admission['allowed_gpus']), errors=errors)
+    from cdr_framework.datasets.amazon2014 import category_files
+    raw=[]
+    for category in ('Sports_and_Outdoors','Clothing_Shoes_and_Jewelry','Cell_Phones_and_Accessories','Electronics'):
+        paths=category_files(category,root/'data/raw/amazon2014')
+        raw.extend((paths.reviews,paths.metadata))
+    raw.append(root/'data/raw/douban_fengzhu_v1.zip')
+    assets={'raw_files':{str(p.relative_to(root)):{'exists':p.is_file(),'bytes':p.stat().st_size if p.is_file() else None} for p in raw},
+            'directions':{p:{'processed':(root/'data/processed'/SCHEMA/p/'shared_manifest.json').exists(),
+                             'ready':(root/'artifacts/shared_protocol'/SCHEMA/p/'ready.json').exists()} for p in SIX_PAIRS}}
     return {'schema': 'six-direction-environment-v1', 'captured_at_utc': utc_now(), 'hostname': socket.gethostname(),
             'user': getpass.getuser(), 'cwd': str(root), 'git': git, 'resources': resources,
             'python': platform.python_version(), 'torch': {'version': torch.__version__, 'cuda_runtime': torch.version.cuda,
-                'cuda_available': cuda, 'device_count': torch.cuda.device_count() if cuda else 0},
+                'cuda_available': cuda, 'device_count': torch.cuda.device_count() if cuda else 0,
+                'bf16_supported':bf16,'bf16_check':'nvidia-smi compute capability >= 8; actual execution checked by smoke'},
+            'driver':driver,'assets':assets,
             'filesystems': filesystems, 'personal_data_root': str(personal_data_root),
             'requested_gpu_whitelist': list(requested_gpus), 'gpu_inventory': cards,
             'admission': admission, 'training_started': False}
@@ -252,16 +303,56 @@ def verify_freeze(root, batch_id, pair=None, seed=None):
     current=git_identity(root)
     if current['status_porcelain'] or current['commit']!=value['commit']:
         raise RuntimeError('Frozen Git commit changed')
-    files=value['files']
-    if pair is not None:
-        selected=[j for j in jobs if j['pair']==pair and j['seed']==seed]
-        if len(selected)!=1: raise RuntimeError('Job not present in freeze')
-        files=selected[0]['files']
+    declaration_path=control_root(root,batch_id)/'experiment_manifest.json'
+    declaration=read_json(declaration_path)
+    if (declaration.get('commit')!=value['commit'] or declaration.get('batch_id')!=batch_id
+            or declaration.get('pairs')!=list(SIX_PAIRS) or declaration.get('seeds')!=list(SEEDS)):
+        raise RuntimeError('Frozen declaration differs')
+    try:
+        canonical=[collect_validation_binding(root,batch_id,p,s,allow_test=True) for p in SIX_PAIRS for s in SEEDS]
+    except Exception as error:
+        raise RuntimeError(f'Frozen validation inputs cannot be reconstructed: {error}') from error
+    files={str(declaration_path.relative_to(root)).replace('\\','/'):file_sha(declaration_path)}
+    for job in canonical: files.update(job['files'])
+    if canonical!=jobs or files!=value['files']:
+        raise RuntimeError('Freeze does not match canonical 18-job validation bindings')
     for relative, digest in files.items():
         path = (root/relative).resolve()
         if not path.is_relative_to(root) or not path.is_file() or file_sha(path) != digest:
             raise RuntimeError(f'Frozen input changed: {relative}')
     return value
+
+
+def test_completion_path(root,batch_id,job):
+    return control_root(root,batch_id)/'test_completions'/f"{job['pair']}_seed{job['seed']}.json"
+
+
+def record_test_completion(root,batch_id,job):
+    report_path=Path(root)/job['output']/'test.json'
+    report=read_json(report_path)
+    if report.get('state')!='complete' or report.get('recovery_identity')!=job['test_identity']:
+        raise RuntimeError('Cannot seal incomplete/mixed test result')
+    receipt={'pair':job['pair'],'seed':job['seed'],'report_sha256':file_sha(report_path),
+             'freeze_sha256':file_sha(control_root(root,batch_id)/'validation_freeze.json'),
+             'test_identity':job['test_identity']}
+    path=test_completion_path(root,batch_id,job)
+    if path.exists() and read_json(path)!=receipt: raise RuntimeError('Test completion receipt differs')
+    if not path.exists(): write_json_atomic(path,receipt)
+    return receipt
+
+
+def verify_test_completion(root,batch_id,job):
+    path=test_completion_path(root,batch_id,job)
+    if not path.exists(): raise RuntimeError('Missing immutable test completion receipt; audit required')
+    receipt=read_json(path); report_path=Path(root)/job['output']/'test.json'
+    if receipt!={'pair':job['pair'],'seed':job['seed'],'report_sha256':file_sha(report_path),
+             'freeze_sha256':file_sha(control_root(root,batch_id)/'validation_freeze.json'),
+             'test_identity':job['test_identity']}:
+        raise RuntimeError('Completed test bytes or freeze changed')
+    report=read_json(report_path)
+    if report.get('state')!='complete' or report.get('recovery_identity')!=job['test_identity']:
+        raise RuntimeError('Test result identity changed')
+    return report
 
 
 def summarize_batch(root,batch_id,reference_path=None):
@@ -275,7 +366,7 @@ def summarize_batch(root,batch_id,reference_path=None):
     rows=[]; files={}
     for job in frozen['jobs']:
         path=root/job['output']/'test.json'
-        report=read_json(path)
+        report=verify_test_completion(root,batch_id,job)
         if (report.get('state')!='complete' or report.get('split')!='test'
                 or report.get('recovery_identity')!=job['test_identity']):
             raise RuntimeError('Incomplete or mixed test result')

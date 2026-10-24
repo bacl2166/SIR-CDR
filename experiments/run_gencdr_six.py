@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
@@ -29,6 +30,23 @@ def training_memory_requirement(report):
     return math.ceil(peak*1024*1.25+2048)
 
 
+def asset_ram_budget(peak):
+    return max(24*2**30,math.ceil(peak*1.25))
+
+
+def checkpoint_write_probe(directory):
+    import torch
+    directory=Path(directory); directory.mkdir(parents=True,exist_ok=True)
+    fd,name=tempfile.mkstemp(prefix='.checkpoint-probe-',suffix='.pt',dir=directory)
+    os.close(fd)
+    try:
+        torch.save({'probe':torch.ones(4)},name)
+        if not torch.equal(torch.load(name,weights_only=True)['probe'],torch.ones(4)):
+            raise RuntimeError('Checkpoint write/read probe failed')
+    finally:
+        os.unlink(name)
+
+
 def worker_commands(root, batch_id, job, phase):
     phases = {'run-validation': ('train', 'validate'), 'run-test': ('test',), 'smoke': ('smoke',)}
     return [[sys.executable, str(Path(root)/'experiments/run_gencdr_shared.py'), '--action', action,
@@ -44,17 +62,41 @@ def check_host_pressure():
         raise RuntimeError('Host CPU pressure: no new jobs admitted')
 
 
+def admit_host_budget(*,available,reserved,required):
+    if available < 16*2**30+reserved+required:
+        raise RuntimeError('Concurrent host RAM reservation exceeds available memory')
+
+
+def check_stage_storage(root,batch_id,phase):
+    from cdr_framework.experiment_control import assert_storage_budget
+    from huggingface_hub.constants import HF_HUB_CACHE
+    from experiments.run_gencdr_shared import model_config
+    outstanding=sum(not (model_config(root,p,s,batch_id).output_dir/'manifest.json').exists()
+                    for p in SIX_PAIRS for s in SEEDS)
+    output_required=16*2**30+(outstanding*4*2**30 if phase=='run-validation' else 0)
+    if phase=='prepare': output_required+=sum(not (paths_for_ready(root,p)).exists() for p in SIX_PAIRS)*5*2**30
+    return assert_storage_budget(root,HF_HUB_CACHE,24*2**30 if phase=='prepare' else 0,output_required)
+
+
+def paths_for_ready(root,pair):
+    from experiments.run_gencdr_shared import paths
+    return paths(root,pair)['control']/'ready.json'
+
+
 def schedule_jobs(jobs, gpu_ids, max_workers, status_dir, worker, *,
-                  inventory=query_gpu_inventory, resource_check=check_host_pressure):
+                  inventory=query_gpu_inventory, resource_check=check_host_pressure,
+                  admission_check=None):
     """Bounded queue; never poll a busy external GPU waiting to seize it."""
     gpu_ids = parse_gpu_ids(gpu_ids)
     if not 1 <= max_workers <= len(gpu_ids): raise ValueError('Invalid concurrency')
-    pending = list(jobs); active = {}; results = []; in_use = set()
+    pending = list(jobs); active = {}; results = []; in_use = set(); fatal_error=None
+    expected={(j['pair'],j['seed']) for j in jobs}
+    if len(expected)!=len(jobs): raise ValueError('Duplicate queued job')
     status_dir = Path(status_dir); status_dir.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         while pending or active:
             blocked = None
-            while pending and len(active) < max_workers:
+            while pending and len(active) < max_workers and fatal_error is None:
                 try:
                     resource_check()
                     cards = inventory()
@@ -63,18 +105,35 @@ def schedule_jobs(jobs, gpu_ids, max_workers, status_dir, worker, *,
                                    if g not in in_use and next(c['memory_free_mib'] for c in cards if c['index']==g)>=j.get('minimum_free_mib',4096) and (not j.get('gpu_uuid') or
                                       j['gpu_uuid'] == next(c['uuid'] for c in cards if c['index'] == g))), None)
                     if choice is None: break
-                    n, gpu = choice; job = pending.pop(n)
+                    n, gpu = choice; job = pending[n]
+                    if job.get('host_ram_bytes'):
+                        admit_host_budget(available=host_resources()['memory'].get('MemAvailable',0),
+                            reserved=sum(r.get('host_ram_bytes',0) for r,_ in active.values()),
+                            required=job['host_ram_bytes'])
+                    if admission_check is not None:
+                        try: admission_check(job)
+                        except Exception as error:
+                            fatal_error=f'Fatal admission failure: {error}'
+                            write_json_atomic(status_dir/f"{job['pair']}_seed{job['seed']}.json",
+                                              {**job,'state':'blocked','error':fatal_error})
+                            break
                     assert_gpu_launchable({'requested_gpu_whitelist': gpu_ids, 'gpu_inventory': inventory()}, gpu,
                                           job.get('minimum_free_mib',4096))
                     receipt = {**job, 'gpu': gpu, 'state': 'running', 'started_at': utc_now()}
                     path = status_dir/f"{job['pair']}_seed{job['seed']}.json"
                     write_json_atomic(path, receipt)
                     active[pool.submit(worker, job, gpu)] = (receipt, path)
+                    pending.pop(n)
                     in_use.add(gpu)
                 except (RuntimeError, ValueError) as error:
-                    blocked = str(error); break
+                    blocked = str(error)
+                    if pending:
+                        job=pending[0]
+                        write_json_atomic(status_dir/f"{job['pair']}_seed{job['seed']}.json",
+                                          {**job,'state':'blocked','error':blocked})
+                    break
             if not active:
-                if pending: raise RuntimeError(blocked or 'Approved cards busy or affinity card unavailable; no job started')
+                if pending: raise RuntimeError(fatal_error or blocked or 'Approved cards busy or affinity card unavailable; no job started')
                 break
             completed, _ = wait(active, return_when=FIRST_COMPLETED)
             for future in completed:
@@ -86,6 +145,9 @@ def schedule_jobs(jobs, gpu_ids, max_workers, status_dir, worker, *,
                     result = {**receipt, 'state': 'failed', 'returncode': 1, 'error': str(error)}
                 result['ended_at'] = utc_now()
                 write_json_atomic(path, result); results.append(result)
+    if fatal_error: raise RuntimeError(fatal_error)
+    if len(results)!=len(jobs) or {(r['pair'],r['seed']) for r in results}!=expected:
+        raise RuntimeError('Queue returned an incomplete job set')
     return results
 
 
@@ -94,9 +156,18 @@ def run_validation_queue(queue, **kwargs):
     for seed in SEEDS:
         group = queue([j for j in validation_jobs() if j['seed'] == seed], **kwargs)
         results.extend(group)
-        if any(r['returncode'] for r in group):
+        if (len(group)!=6 or {(r['pair'],r['seed']) for r in group}!={(p,seed) for p in SIX_PAIRS}
+                or any(r['returncode'] for r in group)):
             raise RuntimeError(f'Seed {seed} has failed jobs; later seeds remain closed')
     return results
+
+
+def resume_queue(jobs,completed,schedule):
+    satisfied=[]; pending=[]
+    for job in jobs:
+        if completed(job): satisfied.append({**job,'state':'reused','returncode':0})
+        else: pending.append(job)
+    return satisfied+(schedule(pending) if pending else [])
 
 
 def child_environment(gpu=None):
@@ -104,7 +175,10 @@ def child_environment(gpu=None):
     env.update(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
                TOKENIZERS_PARALLELISM='false', PYTHONIOENCODING='utf-8',
                CUBLAS_WORKSPACE_CONFIG=':4096:8', NVIDIA_TF32_OVERRIDE='0')
-    if gpu is not None: env['CUDA_VISIBLE_DEVICES'] = str(gpu)
+    if gpu is not None:
+        if not isinstance(gpu,str) or not gpu.startswith('GPU-'): raise ValueError('Use admitted full GPU UUID')
+        env['CUDA_VISIBLE_DEVICES'] = gpu
+        env['SIR_EXPECTED_GPU_UUID'] = gpu
     return env
 
 
@@ -174,23 +248,27 @@ def pin_asset_models(root,batch_id):
 
 def reuse_opposite_embedding(root,pair):
     """Reuse only byte-identical ordered item texts and the pinned encoder recipe."""
-    from cdr_framework.experiment_control import can_reuse_embedding
+    from cdr_framework.experiment_control import can_reuse_embedding, require_embedding_recipe
     from experiments.run_gencdr_shared import paths, asset_identity
     import shutil
     opposite=SIX_PAIRS[SIX_PAIRS.index(pair)^1]
     source,target=paths(root,opposite),paths(root,pair)
-    if (target['embedding']/'manifest.json').exists(): return True
-    if target['embedding'].exists() and any(target['embedding'].iterdir()): return False
-    manifest=source['embedding']/'manifest.json'
-    if not manifest.exists(): return False
-    old=read_json(manifest); model=read_json(target['control']/'embedding_model.json')
+    model=read_json(target['control']/'embedding_model.json')
     texts=target['processed']/'item_texts.jsonl'
     expected={'input_sha256':file_sha(texts),'model_revision':model['revision'],
               'model_config_sha256':model['model_config_sha256'],'dimension':768,'normalized':True,
               'max_sequence_length':512,'item_count':sum(1 for line in texts.open(encoding='utf-8') if line.strip())}
+    existing=target['embedding']/'manifest.json'
+    if existing.exists():
+        require_embedding_recipe(read_json(existing),expected)
+        if not (target['embedding']/'text_embeddings.pt').is_file(): raise RuntimeError('Completed embedding matrix missing')
+        return True
+    if target['embedding'].exists() and any(target['embedding'].iterdir()): return False
+    manifest=source['embedding']/'manifest.json'
+    if not manifest.exists(): return False
+    old=read_json(manifest)
     if not can_reuse_embedding(old,expected): return False
-    if old.get('completed_batches')!=(old['item_count']+old['batch_size']-1)//old['batch_size']:
-        return False
+    require_embedding_recipe(old,expected)
     import torch
     tensor=source['embedding']/'text_embeddings.pt'
     matrix=torch.load(tensor,map_location='cpu',weights_only=True)
@@ -211,6 +289,7 @@ def execute_phase(root,batch_id,phase,gpus,concurrency,cpu_workers):
     from experiments.run_llm_cdr import prepare_model
     control=control_root(root,batch_id)
     logs=root/'logs'/SCHEMA/batch_id
+    check_stage_storage(root,batch_id,phase)
     if phase=='convert':
         def convert(pair):
             return run_commands([[sys.executable,root/'experiments/run_gencdr_shared.py','--action','convert',
@@ -227,6 +306,7 @@ def execute_phase(root,batch_id,phase,gpus,concurrency,cpu_workers):
         if any(r['returncode'] for r in results.values()): raise RuntimeError('Conversion incomplete; inspect logs')
         return
     if phase=='prepare':
+        admit_host_budget(available=host_resources()['memory'].get('MemAvailable',0),reserved=0,required=24*2**30)
         pin_asset_models(root,batch_id)
         def prepare(job,gpu):
             pair=job['pair']; commands=asset_commands(root,pair)
@@ -234,16 +314,30 @@ def execute_phase(root,batch_id,phase,gpus,concurrency,cpu_workers):
                 verify_ready(root,pair)
             else:
                 if reuse_opposite_embedding(root,pair): commands=commands[1:]
-                run_commands(commands,root,logs/f'{pair}_prepare.log',gpu)
+                uuid=next(c['uuid'] for c in query_gpu_inventory() if c['index']==gpu)
+                run_commands(commands,root,logs/f'{pair}_prepare.log',uuid)
                 seal(root,pair)
             for seed in SEEDS:
                 prepare_model(model_config(root,pair,seed,batch_id),runtime_path(root,pair,seed,batch_id))
             return {'ready':True}
         # Finish three forward encodings before the reverse wave can reuse them.
-        for pairs in (SIX_PAIRS[::2],SIX_PAIRS[1::2]):
-            results=schedule_jobs([{'pair':p,'seed':42,'minimum_free_mib':24576} for p in pairs],gpus,min(concurrency,3),
-                                  control/'status/prepare',prepare)
+        ram_budget=24*2**30; asset_concurrency=1
+        for wave,pairs in enumerate(((SIX_PAIRS[0],),SIX_PAIRS[2::2],SIX_PAIRS[1::2])):
+            results=schedule_jobs([{'pair':p,'seed':42,'minimum_free_mib':24576,'host_ram_bytes':ram_budget} for p in pairs],gpus,min(concurrency,asset_concurrency),
+                                  control/'status/prepare',prepare,
+                                  resource_check=lambda:(check_host_pressure(),check_stage_storage(root,batch_id,phase)))
             if any(r['returncode'] for r in results): raise RuntimeError('Asset preparation incomplete')
+            if wave==0:
+                log=logs/f'{SIX_PAIRS[0]}_prepare.log'
+                peaks=[]
+                for line in log.read_text(encoding='utf-8').splitlines() if log.exists() else []:
+                    try: item=json.loads(line)
+                    except ValueError: continue
+                    if item.get('asset_peak_rss_bytes'): peaks.append(item['asset_peak_rss_bytes'])
+                if peaks:
+                    ram_budget=asset_ram_budget(max(peaks)); asset_concurrency=3
+                write_json_atomic(control/'asset_resource_budget.json',{'pilot_measured':bool(peaks),
+                    'host_ram_reservation_bytes':ram_budget,'maximum_concurrency':min(concurrency,asset_concurrency)})
         return
     from cdr_framework.experiment_control import verify_freeze
     if phase=='run-test':
@@ -265,7 +359,8 @@ def execute_phase(root,batch_id,phase,gpus,concurrency,cpu_workers):
             if affinity.exists() and read_json(affinity)!=value: raise RuntimeError('Job GPU affinity changed')
             if not affinity.exists(): write_json_atomic(affinity,value)
         log=logs/f'{pair}_seed{seed}_{phase}.log'
-        result=run_commands(worker_commands(root,batch_id,job,phase),root,log,gpu)
+        if phase=='smoke': checkpoint_write_probe(control/'checkpoint_probes')
+        result=run_commands(worker_commands(root,batch_id,job,phase),root,log,current['uuid'])
         if phase=='smoke':
             report=None
             for line in log.read_text(encoding='utf-8').splitlines():
@@ -279,12 +374,33 @@ def execute_phase(root,batch_id,phase,gpus,concurrency,cpu_workers):
         return result
     def queue(group,**kwargs):
         for job in group:
+            job['host_ram_bytes']=12*2**30
             if phase in ('run-validation','run-test'):
                 measured=read_json(control/'smoke'/f"{job['pair']}.json")
                 job['minimum_free_mib']=training_memory_requirement(measured['report'])
             affinity=control/'affinity'/f"{job['pair']}_seed{job['seed']}.json"
-            if affinity.exists(): job['gpu_uuid']=read_json(affinity)['gpu_uuid']
-        return schedule_jobs(group,gpus,concurrency,control/'status'/phase,worker)
+            if affinity.exists():
+                uuid=read_json(affinity)['gpu_uuid']
+                if job.get('gpu_uuid') and job['gpu_uuid']!=uuid: raise RuntimeError('Frozen UUID and affinity differ')
+                job['gpu_uuid']=uuid
+        gate=(lambda job:verify_freeze(root,batch_id)) if phase=='run-test' else None
+        def completed(job):
+            from cdr_framework.experiment_control import collect_validation_binding, verify_test_completion
+            cfg=model_config(root,job['pair'],job['seed'],batch_id)
+            tuning=root/'artifacts/tuning'/SCHEMA/batch_id/job['pair']/f"seed{job['seed']}"
+            if phase=='run-test':
+                if not (cfg.output_dir/'test.json').exists(): return False
+                binding=next(j for j in frozen['jobs'] if (j['pair'],j['seed'])==(job['pair'],job['seed']))
+                verify_test_completion(root,batch_id,binding)
+                return True
+            if phase=='run-validation' and all(p.exists() for p in
+                    (cfg.output_dir/'manifest.json',tuning/'search.json',tuning/'verification.json')):
+                collect_validation_binding(root,batch_id,job['pair'],job['seed'])
+                return True
+            return False
+        return resume_queue(group,completed,lambda pending:schedule_jobs(pending,gpus,concurrency,
+                            control/'status'/phase,worker,admission_check=gate,
+                            resource_check=lambda:(check_host_pressure(),check_stage_storage(root,batch_id,phase))))
     results=run_validation_queue(queue) if phase=='run-validation' else queue(jobs)
     if any(r['returncode'] for r in results): raise RuntimeError(f'{phase} has failed jobs; inspect status/logs')
 
@@ -331,7 +447,7 @@ def main():
             write_json_atomic(control/'environment_snapshot.json', snapshot)
         if args.action == 'preflight':
             print(json.dumps(snapshot, ensure_ascii=False, indent=2)); return
-        if not snapshot['admission']['production_ready']:
+        if snapshot['admission']['errors'] or (not snapshot['admission']['allowed_gpus'] and args.action in ('prepare','smoke')):
             raise RuntimeError('Preflight refused: '+str(snapshot['admission']))
         execute_phase(root, args.batch_id, args.action, gpus, concurrency, args.cpu_workers)
 

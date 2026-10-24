@@ -144,6 +144,13 @@ def validate_asset_chain(root, pair):
         raise RuntimeError('Shared embedding belongs to different item texts')
     if emb.get('protocol_sha256') != sha(p['processed']/'shared_manifest.json'):
         raise RuntimeError('Shared embedding belongs to a different protocol')
+    from cdr_framework.experiment_control import require_embedding_recipe
+    model=json.loads((p['control']/'embedding_model.json').read_text(encoding='utf-8'))
+    with (p['processed']/'item_texts.jsonl').open(encoding='utf-8') as stream:
+        item_count=sum(bool(line.strip()) for line in stream)
+    require_embedding_recipe(emb,{'input_sha256':text_hash,'model_revision':model['revision'],
+        'model_config_sha256':model['model_config_sha256'],'dimension':768,'normalized':True,
+        'max_sequence_length':512,'item_count':item_count})
     token = json.loads((p['tokenizer']/'manifest.json').read_text(encoding='utf-8'))
     if (token.get('embeddings_sha256') != sha(p['embedding']/'text_embeddings.pt')
             or token.get('item_texts_sha256') != text_hash or token.get('domain_labels') != list(PAIRS[pair])):
@@ -184,6 +191,16 @@ def execute(command):
     subprocess.run(list(map(str, command)), cwd=ROOT, env=environment, check=True)
 
 
+def verify_gpu_binding():
+    import torch
+    expected=os.environ['SIR_EXPECTED_GPU_UUID']
+    if os.environ.get('CUDA_VISIBLE_DEVICES')!=expected or torch.cuda.device_count()!=1:
+        raise RuntimeError('Worker GPU visibility differs from approved UUID')
+    actual=str(getattr(torch.cuda.get_device_properties(0),'uuid','unavailable'))
+    if actual.lower().removeprefix('gpu-')!=expected.lower().removeprefix('gpu-'):
+        raise RuntimeError(f'Logical cuda:0 UUID differs from approved GPU: {actual}')
+
+
 def validate_runtime(root, pair, seed, batch_id):
     from experiments.run_llm_cdr import absolute_config
     from cdr_framework.llm_training import config_payload
@@ -200,6 +217,8 @@ def batch_workflow(root, pair, action, seed, device, batch_id):
     validate_batch_id(batch_id)
     if action not in ('train', 'validate', 'test', 'runtime', 'smoke'):
         raise ValueError('Unsupported batch action')
+    if device.startswith('cuda') and os.getenv('SIR_EXPECTED_GPU_UUID'):
+        verify_gpu_binding()
     verify_ready(root, pair)
     config = model_config(root, pair, seed, batch_id)
     runtime = runtime_path(root, pair, seed, batch_id)
@@ -220,10 +239,15 @@ def batch_workflow(root, pair, action, seed, device, batch_id):
                 execute([sys.executable, ROOT/'experiments/recover_llm_evaluation.py', '--action', stage,
                          '--config', runtime, '--output', tuning, '--device', device])
         else:
-            from cdr_framework.experiment_control import verify_freeze
-            verify_freeze(root, batch_id, pair, seed)
+            from cdr_framework.experiment_control import verify_freeze, verify_test_completion, record_test_completion
+            frozen=verify_freeze(root, batch_id, pair, seed)
+            job=next(j for j in frozen['jobs'] if j['pair']==pair and j['seed']==seed)
+            if (config.output_dir/'test.json').exists():
+                verify_test_completion(root,batch_id,job)
+                return
             execute([sys.executable, ROOT/'experiments/recover_llm_evaluation.py', '--action', 'test',
                      '--config', runtime, '--output', tuning, '--device', device])
+            record_test_completion(root,batch_id,job)
 
 
 def workflow(root, pair, action, seed, device, bundle=None, training_examples='all-prefixes'):
@@ -303,8 +327,13 @@ def main():
         if args.action not in ('embedding', 'tokenize') or len(args.pairs) != 1: parser.error('Invalid worker')
         # Parent holds the controller lock. Each heavy stage has a fresh process,
         # releasing the 8B model before tokenizer/recommender allocation.
+        if args.device.startswith('cuda') and os.getenv('SIR_EXPECTED_GPU_UUID'):
+            verify_gpu_binding()
         pair = args.pairs[0]; verify_shared(paths(args.root, pair)['processed'])
         (embedding if args.action == 'embedding' else tokenize)(args.root, pair, args.device)
+        if sys.platform.startswith('linux'):
+            import resource
+            print(json.dumps({'asset_stage':args.action,'asset_peak_rss_bytes':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*1024}),flush=True)
         return
     for pair in args.pairs:
         workflow(args.root.resolve(), pair, args.action, args.seed, args.device, args.bundle, args.training_examples)

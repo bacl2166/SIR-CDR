@@ -42,7 +42,7 @@ python -m unittest discover -s tests -v
 python experiments/run_gencdr_six.py --action preflight --batch-id "$SIR_BATCH" --gpus "${SIR_GPUS[@]}" --data-root "$SIR_DATA"
 ```
 
-预检报告记录 GPU占用、CPU/负载、内存、文件系统、驱动、CUDA runtime、Python/PyTorch、Git commit、人工白名单。`admission.production_ready=true` 才能进入后续执行；预检本身不启动训练。单个忙碌卡会被排除；全忙时停止，之后由你重新执行，而不是后台等待抢卡。初始磁盘门槛为60GiB，正式准备和运行时还应按原始数据、缓存与18份checkpoint的实际占用保留余量。
+预检报告记录 GPU占用、CPU/负载、内存、文件系统、驱动、BF16硬件能力、CUDA runtime、Python/PyTorch、Git commit、人工白名单及原始资产清单。`admission.production_ready=true` 表示有卡可进入GPU阶段；预检本身不启动训练。单个忙碌卡会被排除；全忙且仍有未完成GPU任务时停止，之后由你重新执行。已完成任务可在CPU核验后跳过。初始磁盘门槛为60GiB；各阶段会另检查实际HF缓存和输出文件系统的合并预算，训练按每个未完成任务4GiB加16GiB余量估计，可能要求更多空间。
 
 若机器尚无环境，按仓库 requirements 在自己的 conda 环境安装，不能修改系统 CUDA 或他人环境。当前 requirements 固定 PyTorch 2.6.0/cu124；服务器驱动信息和 PyTorch CUDA runtime 不是同一个版本号，先以实际导入、GPU可用性和烟雾测试结果判断兼容性。
 
@@ -78,7 +78,7 @@ nohup python -u experiments/run_gencdr_six.py --action convert --batch-id "$SIR_
 nohup python -u experiments/run_gencdr_six.py --action prepare --batch-id "$SIR_BATCH" --gpus "${SIR_GPUS[@]}" --data-root "$SIR_DATA" > "logs/${SIR_BATCH}_prepare.log" 2>&1 &
 ```
 
-准备阶段先统一固定模型revision，再最多三卡准备正向资产，接着准备反向资产。字节完全相同的条目文本与编码参数允许验证后复制embedding，避免重复8B编码；方向特定tokenizer仍独立训练，质量门通过后封存。模型编码和tokenizer使用不同子进程，释放8B模型后再进入下一阶段。已完成且哈希一致的资产复用，中断后重复相同命令恢复；不使用 `--force`。
+准备阶段先统一固定模型revision，单卡运行首个正向任务并测量进程主存峰值，再根据测量结果和剩余资源扩大到最多三卡准备其余正向资产，接着准备反向资产。每个资产任务预留至少24GiB主存或实测峰值×1.25，主机另留16GiB；无法取得首任务测量时保持串行。字节完全相同的条目文本与编码参数允许验证后复制embedding，避免重复8B编码；方向特定tokenizer仍独立训练，质量门通过后封存。模型编码和tokenizer使用不同子进程，释放8B模型后再进入下一阶段。已完成且哈希一致的资产复用，中断后重复相同命令恢复；不使用 `--force`。
 
 ## 4. 烟雾测试与并行训练/验证
 
@@ -88,13 +88,13 @@ nohup python -u experiments/run_gencdr_six.py --action prepare --batch-id "$SIR_
 nohup python -u experiments/run_gencdr_six.py --action smoke --batch-id "$SIR_BATCH" --gpus "${SIR_GPUS[@]}" --data-root "$SIR_DATA" > "logs/${SIR_BATCH}_smoke.log" 2>&1 &
 ```
 
-六方向均通过真实batch前向/反向、梯度、排序检查后执行：
+六方向均通过真实batch前向/反向、梯度、排序与checkpoint序列化写入/读取检查后执行：
 
 ```bash
 nohup python -u experiments/run_gencdr_six.py --action run-validation --batch-id "$SIR_BATCH" --gpus "${SIR_GPUS[@]}" --data-root "$SIR_DATA" > "logs/${SIR_BATCH}_validation.log" 2>&1 &
 ```
 
-默认最多使用白名单中的六张空闲卡，一卡一个方向；可设 `--max-workers 3` 降低并发。每次新启动都重新检查卡占用和主存/负载。训练显存准入使用烟雾测试峰值×1.25+2GiB余量；保持有效batch16、最多30轮、patience5、HR@10选checkpoint。
+默认最多使用白名单中的六张空闲卡，一卡一个方向；可设 `--max-workers 3` 降低并发。子进程通过完整GPU UUID绑定，模型分配前核验逻辑cuda:0确实对应所批准的物理卡。每次新启动都重新检查卡占用、主存预留、负载和磁盘。推荐任务每个预留12GiB主存、主机另留16GiB；训练显存准入使用烟雾测试峰值×1.25+2GiB余量；保持有效batch16、最多30轮、patience5、HR@10选checkpoint。
 
 六个seed42作业全部训练、验证融合选择和精确验证成功，才运行seed43，再运行seed44。每个任务固定GPU UUID以满足精确评测身份；恢复时需要该卡仍在白名单且空闲，不能随意迁移。所有18个作业完成前不计算最终测试指标。
 
@@ -125,6 +125,8 @@ python experiments/run_gencdr_six.py --action summarize --batch-id "$SIR_BATCH"
 ```
 
 结果位于 `artifacts/experiment_control/gencdr-shared-loo-v1/<batch-id>/results.json` 与 `results.csv`，包含18份逐种子指标、六方向均值与样本标准差、GenCDR论文参照及明确的不可严格直接比较说明。
+
+每次放行测试前都会重建并核对18份验证绑定；冻结输入变化会停止新的测试任务。每个完成的测试另写包含报告SHA256和冻结清单SHA256的完成回执，恢复和首次汇总都必须核对该回执。最终测试报告已存在但完成回执缺失时，需要保留现场审计，不能补写回执后假装原样完成。
 
 ## 6. 状态与故障处理
 

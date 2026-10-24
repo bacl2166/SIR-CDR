@@ -1,6 +1,6 @@
 {
   "source": "GenCDR, Table 2, published results",
-  "url": "https://arxiv.org/abs/2511.08006",
+  "url": "https://arxiv.org/html/2511.08006v1#S6.T2",
   "strictly_comparable": false,
   "paper_alignment_verified": false,
   "disclosure": "GenCDR values are quoted from the paper. SIR-CDR uses independently reconstructed public leave-one-out rules; unavailable author population, final splits and per-user predictions prevent a controlled direct comparison. Gaps are descriptive only; no significance test is performed against published GenCDR values.",

@@ -50,6 +50,35 @@ def fixture_checkpoint(config, path):
 
 
 class ControlTests(unittest.TestCase):
+    def test_completed_embedding_rejects_different_pinned_encoder(self):
+        expected={'input_sha256':'texts','model_revision':'a'*40,'model_config_sha256':'cfg',
+                  'dimension':768,'normalized':True,'max_sequence_length':512,'item_count':2}
+        value={**expected,'batch_size':2,'completed_batches':1,'matrix_shape':[3,768]}
+        ec.require_embedding_recipe(value,expected)
+        value['model_revision']='b'*40
+        with self.assertRaises(RuntimeError): ec.require_embedding_recipe(value,expected)
+
+    def test_storage_check_includes_actual_cache_filesystem(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with patch('shutil.disk_usage',return_value=SimpleNamespace(free=2*2**30,total=100*2**30)):
+                with self.assertRaises(RuntimeError): ec.assert_storage_budget(root,root/'cache',24*2**30,16*2**30)
+
+    def test_fictitious_eighteen_job_freeze_is_rejected(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); (root/'README.md').write_text('fixture')
+            filemap={'README.md':ec.file_sha(root/'README.md')}
+            value={'schema':'six-direction-freeze-v1','batch_id':'paper-v1','commit':'fixture-commit',
+                   'test_released':True,'files':filemap,'jobs':[
+                       {'pair':p,'seed':s,'files':filemap,'test_identity':{'fake':True}}
+                       for p in ec.SIX_PAIRS for s in ec.SEEDS]}
+            ec.write_json_atomic(ec.control_root(root,'paper-v1')/'validation_freeze.json',value)
+            with patch.object(ec,'git_identity',return_value={'commit':'fixture-commit','status_porcelain':''}):
+                with self.assertRaises((RuntimeError,FileNotFoundError)): ec.verify_freeze(root,'paper-v1')
+
     def test_summary_preserves_all_seeds_and_uses_sample_standard_deviation(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:
@@ -63,6 +92,7 @@ class ControlTests(unittest.TestCase):
                     ec.write_json_atomic(root/job['output']/'test.json',
                         {'state':'complete','split':'test','recovery_identity':job['test_identity'],
                          'metrics':{k:score for k in ('R@5','N@5','R@10','N@10')}})
+                    ec.record_test_completion(root,'paper-v1',job)
                 result=ec.summarize_batch(root,'paper-v1')
                 self.assertEqual(len(result['per_seed']),18)
                 self.assertAlmostEqual(result['directions'][0]['metrics']['R@5']['mean'],.2)
@@ -72,6 +102,22 @@ class ControlTests(unittest.TestCase):
                 test=root/frozen['jobs'][0]['output']/'test.json'
                 invalid=ec.read_json(test); invalid['recovery_identity']={}; ec.write_json_atomic(test,invalid)
                 with self.assertRaises(RuntimeError): ec.summarize_batch(root,'paper-v1')
+
+    def test_metric_edit_before_first_summary_is_rejected(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); validation_fixture(root)
+            with patch('experiments.run_gencdr_shared.verify_ready'), \
+                 patch('experiments.tune_llm_fusion.validate_checkpoint',side_effect=fixture_checkpoint), \
+                 patch.object(ec,'git_identity',return_value={'commit':'fixture-commit','status_porcelain':''}):
+                job=ec.freeze_batch(root,'paper-v1')['jobs'][0]
+                path=root/job['output']/'test.json'
+                report={'state':'complete','split':'test','recovery_identity':job['test_identity'],
+                        'metrics':{k:.1 for k in ('R@5','N@5','R@10','N@10')}}
+                ec.write_json_atomic(path,report)
+                ec.record_test_completion(root,'paper-v1',job)
+                report['metrics']['R@5']=.8; ec.write_json_atomic(path,report)
+                with self.assertRaises(RuntimeError): ec.verify_test_completion(root,'paper-v1',job)
 
     def test_embedding_reuse_requires_exact_text_and_recipe_identity(self):
         identity={'input_sha256':'texts','model_revision':'a'*40,'model_config_sha256':'cfg',
@@ -123,6 +169,9 @@ class ControlTests(unittest.TestCase):
         self.assertFalse(report['training_started'])
         self.assertIn('git', report)
         self.assertNotIn('environ', report)
+        self.assertIn('driver',report)
+        self.assertIn('bf16_supported',report['torch'])
+        self.assertIn('assets',report)
 
     def test_gpu_whitelist_and_busy_card_fail_closed(self):
         self.assertEqual(ec.parse_gpu_ids(['0', '3']), (0, 3))

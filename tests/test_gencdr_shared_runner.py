@@ -8,6 +8,15 @@ from experiments.run_gencdr_shared import paths, model_config, validate_asset_ch
 
 
 class SharedRunnerTests(unittest.TestCase):
+    def test_child_rejects_wrong_logical_gpu_before_model_allocation(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        from experiments.run_gencdr_shared import verify_gpu_binding
+        with patch.dict('os.environ',{'SIR_EXPECTED_GPU_UUID':'GPU-aaa','CUDA_VISIBLE_DEVICES':'GPU-aaa'}), \
+             patch('torch.cuda.device_count',return_value=1), \
+             patch('torch.cuda.get_device_properties',return_value=SimpleNamespace(uuid='GPU-bbb')):
+            with self.assertRaises(RuntimeError): verify_gpu_binding()
+
     def test_validation_phase_never_dispatches_test(self):
         from unittest.mock import patch
         from experiments.run_gencdr_shared import batch_workflow
