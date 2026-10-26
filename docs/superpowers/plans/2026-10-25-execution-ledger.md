@@ -27,3 +27,13 @@ Base: b49e35ea945ba1f094002a6f21e31db5ae1d06b9
 - Tasks 1–7: complete. Final whole-repository verification after the fix pass: `python -m unittest discover -s tests -v` → 232 tests, 0 failures/errors, 35.012s. CLI help and `git diff --check` passed.
 - Final: Ruling: apply the user's existing GitHub-delivery authorization as a fast-forward update to main — no extra approval menu; remote main was confirmed unchanged at the implementation base. A concurrent remote update must stop publication rather than trigger force-push.
 - No production training, server login, or remote GPU inspection was performed locally. The runbook starts with user-operated server hardware inspection and manual GPU approval.
+
+## 2026-10-26 — fresh CUDA worker smoke failure
+
+- Server evidence: all six asset preparations completed, then all six fresh smoke subprocesses failed at `torch.cuda.reset_peak_memory_stats(cuda:0)` before model construction under PyTorch 2.6.0+cu124. The parent worker's UUID verification does not initialize the separate `run_llm_cdr.py` process.
+- Root cause checked against PyTorch v2.6.0: peak-stat reset enters the allocator without lazy initialization; CUDA `set_device` performs device lazy initialization.
+- RED: `test_cuda_smoke_initializes_selected_device_before_resetting_peak_stats` failed with the same `Invalid device argument` on the original implementation. The CPU-bypass regression passed.
+- Fix: select/initialize the requested worker device before resetting the peak counter. Resolve bare `cuda` through its current logical device, preserving the CLI default; its regression also completed RED/GREEN. No measurement is skipped; model loading, forward/backward, and ranking remain inside the measured interval.
+- GREEN: final focused CLI suite 6/6 passed. Final full CPU suite 235/235 passed in 38.490s, using local PyTorch 2.11.0+cpu. Actual PyTorch 2.6 CUDA execution still requires the user's server smoke checks. Read-only review of the supplied diff found no actionable issues; review tools could not launch, so the review's independent filesystem/GPU evidence is limited.
+- Recovery: keep `paper-reference-v1` and failed receipts unchanged; use a new batch such as `paper-reference-v2` after pulling the fix. Shared converter, asset driver, protocols and sealed data remain unchanged, so `prepare` can verify/reuse all six ready assets and write new batch runtime configs. No formal training or final testing had started in the failed batch.
+- Resource ruling: retain the approved GPU whitelist; maximum concurrency remains three, actual admission uses currently idle cards only. The latest user-provided process list shows GPU4/5 occupied; do not stop or reuse these processes to recover this experiment.

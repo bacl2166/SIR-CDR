@@ -141,3 +141,28 @@ python experiments/run_gencdr_six.py --action summarize --batch-id "$SIR_BATCH"
 - 后续修复仍走本地修改/测试/提交GitHub，再由服务器拉取；已冻结批次更新代码后会拒绝继续。新代码使用新batch，并审查既往测试接触情况。
 
 需要协助时，提供 `git rev-parse HEAD`、脱敏的预检JSON、状态JSON和相关日志末尾；不要提供任何凭据。
+
+## 7. PyTorch 2.6 烟雾测试的 CUDA 初始化恢复
+
+若所有方向均在 `torch.cuda.reset_peak_memory_stats(device)` 报
+`RuntimeError: Invalid device argument`，且还没有开始模型构建，检查所用提交是否包含
+烟雾测试先解析逻辑设备并执行 `torch.cuda.set_device` 的修复。PyTorch 2.6 的峰值统计重置
+本身不会初始化 CUDA 分配器；父进程的 GPU 检查也不会初始化随后新建的 Python 子进程。
+修复在子进程内选择已获准的逻辑设备后重置统计，仍统计完整模型加载、前后向和排序的显存峰值。
+
+保留旧批次及其失败日志，通过 GitHub 更新代码并重新运行 CPU 单元测试。
+代码提交变化后使用新批次，例如 `paper-reference-v2`；不要编辑旧批次的 commit 记录。
+本次错误发生在正式训练和最终测试之前。新的 `prepare` 会核验并复用原有六方向封存资产，
+不需要重复转换原始数据或重新生成已通过检查的 embedding/tokenizer。
+推荐器运行配置和控制记录会写入新批次的目录。恢复时仍须让模型下载入口和 `HF_HOME`
+与已成功的会话一致，并重新检查获准卡的实际占用。
+
+```bash
+export SIR_BATCH=paper-reference-v2
+python experiments/run_gencdr_six.py --action preflight --batch-id "$SIR_BATCH" --gpus "${SIR_GPUS[@]}" --data-root "$SIR_DATA" --max-workers 3
+```
+
+确认预检无错误且有空闲卡后，从 `prepare` 继续，然后依次 `smoke`、`run-validation`、
+`freeze`、`run-test`、`summarize`。并发上限为3；只有两张获准卡空闲时实际最多运行两个作业。
+任何阶段失败均停止后续阶段，不能跳过烟雾测试直接训练。GPU 显存被其他计算进程占用时，
+即便利用率为0也不准入；不能为恢复本实验而停止其他进程。

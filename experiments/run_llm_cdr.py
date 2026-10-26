@@ -92,6 +92,9 @@ def preflight(config):
 
 def smoke(config, device):
     if device.type == "cuda":
+        # PyTorch 2.6 peak-stat reset does not lazily initialize the allocator.
+        selected = device if device.index is not None else torch.cuda.current_device()
+        torch.cuda.set_device(selected)
         torch.cuda.reset_peak_memory_stats(device)
     torch.manual_seed(config.seed)
     model, catalog = llm_training.build_model(config, device)
