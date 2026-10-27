@@ -5,6 +5,7 @@ pinned, already-running training checkout. Only Linux supports process handoff.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+import ctypes
 import hashlib
 import importlib
 import json
@@ -19,6 +20,59 @@ import time
 
 
 TRAINING_COMMIT = 'a887bd389ff72eb14ec96be0dfb876a61dae9331'
+LEGACY_COORDINATOR = {
+    'coordinator_commit': 'd857f1cdb5b8bf07296db98de7eb6e4e8e56c0d8',
+    'coordinator_sha256': '3205658dad424a15f78e62351a1b5e27c10cb1994c4ff289927338f731834814',
+}
+
+
+class PidfdBackend:
+    """Use a stable pidfd even when Conda Python omits its Linux wrappers."""
+    def __init__(self):
+        self._open = getattr(os, 'pidfd_open', None)
+        self._send = getattr(signal, 'pidfd_send_signal', None)
+        if callable(self._open) and callable(self._send):
+            self.name = 'python'
+            return
+        if sys.platform != 'linux':
+            raise RuntimeError('pidfd requires Linux; no numeric-PID fallback')
+        try:
+            self._libc = ctypes.CDLL(None, use_errno=True)
+            self._open = self._libc.pidfd_open
+            self._send = self._libc.pidfd_send_signal
+        except (AttributeError, OSError) as error:
+            raise RuntimeError('pidfd unavailable in Python and libc; no numeric-PID fallback') from error
+        self._open.argtypes = [ctypes.c_int, ctypes.c_uint]
+        self._open.restype = ctypes.c_int
+        self._send.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint]
+        self._send.restype = ctypes.c_int
+        self.name = 'glibc'
+
+    @staticmethod
+    def checked(result):
+        if result == -1:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+        return result
+
+    def open(self, pid):
+        if self.name == 'python':
+            return self._open(pid)
+        return self.checked(self._open(pid, 0))
+
+    def send(self, descriptor, signum):
+        if self.name == 'python':
+            return self._send(descriptor, signum)
+        return self.checked(self._send(descriptor, signum, None, 0))
+
+    def probe(self):
+        """Signal zero checks only our own process; it delivers no signal."""
+        descriptor = self.open(os.getpid())
+        try:
+            self.send(descriptor, 0)
+        finally:
+            os.close(descriptor)
+        return {'backend': self.name, 'self_probe': 'passed'}
 
 
 def sha(path):
@@ -178,15 +232,14 @@ def expected_uuid(process):
 
 def terminate_controller(process, root, batch):
     """Signal exactly one stable own controller, never a PID group or its workers."""
-    if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
-        raise RuntimeError('pidfd support is required; no unsafe numeric-PID fallback')
-    descriptor = os.pidfd_open(process['pid'])
+    backend = PidfdBackend()
+    descriptor = backend.open(process['pid'])
     try:
         current = process_snapshot(process['pid'])
         if current is None or current['start_ticks'] != process['start_ticks']:
             raise RuntimeError('Controller exited or PID identity changed before handoff')
         validate_controller(current, root, batch, os.getuid())
-        signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+        backend.send(descriptor, signal.SIGTERM)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             current = process_snapshot(process['pid'])
@@ -247,12 +300,52 @@ class Coordinator:
             'gpus': [{'index': c['index'], 'uuid': c['uuid']} for c in selected],
             'seed_policy': 'prefer uncovered directions;independent fixed seeds42/43/44;global18-job freeze',
             'authorization': 'user authorized remaining idle GPUs and later seeds;never repeat completed jobs'}
-        if self.resource.exists() and read(self.resource) != self.resource_value:
-            raise RuntimeError('Existing resource amendment differs; do not overwrite it')
+        self.bind_resource()
         for pair in self.pairs:
             smoke = read(self.control / 'smoke' / f'{pair}.json')
             if not smoke.get('passed') or smoke['identity'] != self.runner.smoke_identity(self.root, batch, pair):
                 raise RuntimeError('Missing or stale original smoke gate')
+
+    def bind_resource(self):
+        """Append provenance for the known pre-handoff compatibility failure only."""
+        current = dict(self.resource_value)
+        self.coordinator_sha256 = current['coordinator_sha256']
+        self.repair_path = self.control / 'extension_pidfd_recovery.json'
+        self.repair_value = None
+        if not self.resource.exists() or read(self.resource) == current:
+            if self.repair_path.exists():
+                raise RuntimeError('Unexpected pidfd recovery receipt')
+            return
+        old = read(self.resource)
+        if (any(old.get(key) != value for key, value in LEGACY_COORDINATOR.items())
+                or {k: v for k, v in old.items() if k not in LEGACY_COORDINATOR}
+                != {k: v for k, v in current.items() if k not in LEGACY_COORDINATOR}):
+            raise RuntimeError('Existing resource amendment differs; do not overwrite it')
+        self.repair_value = {
+            'schema': 'pidfd-compatibility-recovery-v1',
+            'resource_sha256': sha(self.resource),
+            'previous_coordinator_commit': old['coordinator_commit'],
+            'previous_coordinator_sha256': old['coordinator_sha256'],
+            'replacement_coordinator_commit': current['coordinator_commit'],
+            'replacement_coordinator_sha256': current['coordinator_sha256'],
+            'reason': 'Conda Python omits pidfd wrappers; use stable libc pidfd without changing experiment',
+        }
+        if self.repair_path.exists():
+            self.verify_repair()
+        elif any((self.control / name).exists() for name in
+                 ('extension_handoff_complete.json', 'validation_freeze.json')):
+            raise RuntimeError('New pidfd recovery is closed after handoff/freeze')
+        self.resource_value = old
+
+    def verify_repair(self):
+        if self.repair_value is not None and (
+                not self.repair_path.exists() or read(self.repair_path) != self.repair_value):
+            raise RuntimeError('Pidfd recovery receipt missing or changed')
+
+    def recovery_binding(self):
+        self.verify_repair()
+        return ({'coordinator_recovery_sha256': sha(self.repair_path)}
+                if self.repair_value is not None else {})
 
     @staticmethod
     def git(root, *arguments):
@@ -313,10 +406,12 @@ class Coordinator:
         self.core.write_json_atomic(path, value)
 
     def inspect(self):
+        pidfd = PidfdBackend().probe()
         live = self.live()
         done = [j for j in self.configs if j not in live and self.completed(j)]
         snapshot = self.core.capture_environment(self.root, Path(self.declaration['data_root']), self.gpus)
-        return {'resource_plan': self.resource_value, 'completed_validation_jobs': [list(j) for j in done],
+        return {'pidfd': pidfd, 'pidfd_recovery_plan': self.repair_value,
+                'resource_plan': self.resource_value, 'completed_validation_jobs': [list(j) for j in done],
                 'live_jobs': [{'pair': j[0], 'seed': j[1], 'gpu_uuid': rows[0]['gpu_uuid'],
                                'pids': [r['pid'] for r in rows]} for j, rows in live.items()],
                 'admission': snapshot['admission'], 'gpu_inventory': snapshot['gpu_inventory']}
@@ -359,8 +454,9 @@ class Coordinator:
 
     def pre_admission(self):
         self.assert_git(self.root, TRAINING_COMMIT)
-        if read(self.resource) != self.resource_value or sha(__file__) != self.resource_value['coordinator_sha256']:
+        if read(self.resource) != self.resource_value or sha(__file__) != self.coordinator_sha256:
             raise RuntimeError('Coordinator/resource amendment changed')
+        self.verify_repair()
         self.runner.check_host_pressure()
         self.runner.check_stage_storage(self.root, self.batch, 'run-validation')
 
@@ -542,10 +638,16 @@ class Coordinator:
         receipt = read(self.control / 'extension_freeze.json')
         frozen = self.core.verify_freeze(self.root, self.batch)
         verify_extension_freeze(receipt, sha(self.resource), sha(self.control / 'validation_freeze.json'))
+        if receipt.get('coordinator_recovery_sha256') != self.recovery_binding().get('coordinator_recovery_sha256'):
+            raise RuntimeError('Pidfd recovery differs from frozen provenance')
         return frozen
 
     def run(self):
         with self.recovery.operation_lock(self.control / 'extension_controller'):
+            print(json.dumps({'pidfd': PidfdBackend().probe()}), flush=True)
+            # Capability probe precedes any new provenance or handoff mutation.
+            if self.repair_value is not None:
+                immutable_receipt(self.repair_path, self.repair_value)
             self.handoff()
             with self.recovery.operation_lock(self.control / 'controller'):
                 immutable_receipt(self.control / 'extension_handoff_complete.json', {'resource_sha256': sha(self.resource)})
@@ -571,7 +673,8 @@ class Coordinator:
                 frozen = self.core.freeze_batch(self.root, self.batch)
                 immutable_receipt(self.control / 'extension_freeze.json', {
                     'resource_sha256': sha(self.resource),
-                    'validation_freeze_sha256': sha(self.control / 'validation_freeze.json')})
+                    'validation_freeze_sha256': sha(self.control / 'validation_freeze.json'),
+                    **self.recovery_binding()})
                 self.guard_freeze()
                 self.queue(testing=True)
                 self.guard_freeze()
@@ -580,7 +683,8 @@ class Coordinator:
                     'resource_sha256': sha(self.resource),
                     'extension_freeze_sha256': sha(self.control / 'extension_freeze.json'),
                     'results_json_sha256': sha(self.control / 'results.json'),
-                    'results_csv_sha256': sha(self.control / 'results.csv')})
+                    'results_csv_sha256': sha(self.control / 'results.csv'),
+                    **self.recovery_binding()})
                 print('EXTENDED_PIPELINE_COMPLETE', flush=True)
 
 
