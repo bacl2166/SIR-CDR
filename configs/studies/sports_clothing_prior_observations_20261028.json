@@ -1,0 +1,54 @@
+{
+  "schema": "sports-clothing-prior-validation-observations-v1",
+  "purpose": "Disclosure of prior adaptive validation exploration; not independent test evidence",
+  "source_batch": "paper-reference-v2",
+  "source_commit": "a887bd389ff72eb14ec96be0dfb876a61dae9331",
+  "seeds_observed": [42],
+  "test_metrics_observed": false,
+  "observations": [
+    "Original training histories were used to compare HR@10-best and NDCG@10-best epochs.",
+    "CPU-only pure-retrieval comparisons showed generation fusion improved both directions.",
+    "Per direction,17 original snapshot search records and36 additional evaluations covered52 distinct fusion configurations.",
+    "Earlier native execution searches and diagnostic-only retrieval evaluations exist separately;52 is not the total count of all historical evaluations.",
+    "HPO results remain exploratory validation selection; final significance cannot be inferred from these observations."
+  ],
+  "preserved_diagnostic_reports": [
+    "artifacts/diagnostics/sports-clothing-fusion-v1/20261028T102427170582Z/sports_to_clothing_seed42.json",
+    "artifacts/diagnostics/sports-clothing-fusion-v1/20261028T102427170582Z/clothing_to_sports_seed42.json"
+  ],
+  "directions": [
+    {
+      "pair": "sports_to_clothing",
+      "available_checkpoint_epochs": [15,20],
+      "original_HR_best_epoch": 15,
+      "history_NDCG_best_epoch": 17,
+      "history_NDCG_best_checkpoint_not_present_in_listing": true,
+      "original_snapshot_selected": {
+        "setting": {"pool":500,"weight":0.5,"normalization":"none"},
+        "R@10":0.02530633990410229,
+        "N@10":0.012664359025764519
+      },
+      "exploratory_snapshot_NDCG_best": {
+        "setting": {"pool":1000,"weight":0.75,"normalization":"none"},
+        "R@10":0.024773574853489612,
+        "N@10":0.01309550849591201
+      }
+    },
+    {
+      "pair":"clothing_to_sports",
+      "available_checkpoint_epochs":[17,22],
+      "original_HR_best_epoch":17,
+      "history_NDCG_best_epoch":17,
+      "original_snapshot_selected": {
+        "setting":{"pool":500,"weight":1.0,"normalization":"none"},
+        "R@10":0.034044852742502026,
+        "N@10":0.01786774511769902
+      },
+      "exploratory_snapshot_NDCG_best": {
+        "setting":{"pool":500,"weight":0.875,"normalization":"none"},
+        "R@10":0.03539583896244258,
+        "N@10":0.018375201292865004
+      }
+    }
+  ]
+}
