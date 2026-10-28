@@ -59,7 +59,8 @@ def verify_shared(output, identity=None):
     return True
 
 
-def build_shared(events, items, source, target, output, *, provenance, training_examples='all-prefixes'):
+def build_shared(events, items, source, target, output, *, provenance, training_examples='all-prefixes',
+                 schema=SCHEMA, upstream=UPSTREAM, protocol_overrides=None):
     """Freeze the common population; no random sampling/count matching/holdout replacement.
 
     `items` maps (domain, original ID) to static/ID-only text. Interaction-derived
@@ -69,6 +70,9 @@ def build_shared(events, items, source, target, output, *, provenance, training_
     """
     if source == target or training_examples not in ('all-prefixes', 'last-prefix'):
         raise ValueError('Distinct domains and a supported training expansion are required')
+    if protocol_overrides and set(protocol_overrides) - {'checkpoint_selection', 'test_policy',
+                                                        'comparison_scope', 'reconstruction_notes'}:
+        raise ValueError('Protocol overrides may only replace documentation fields')
     groups = {source: defaultdict(list), target: defaultdict(list)}
     keys = set(); event_digest = hashlib.sha256()
     # Canonicalize before hashing so input iteration order cannot change splits.
@@ -88,10 +92,12 @@ def build_shared(events, items, source, target, output, *, provenance, training_
     catalog = sorted({(e.domain, e.item) for d in groups for u in population for e in groups[d][u]})
     text_digest = hashlib.sha256(json.dumps([(d, i, items[d, i]) for d, i in catalog],
                                             ensure_ascii=False).encode()).hexdigest()
-    identity = {'schema': SCHEMA, 'source_domain': source, 'target_domain': target,
+    identity = {'schema': schema, 'source_domain': source, 'target_domain': target,
                 'events_sha256': event_digest.hexdigest(), 'texts_sha256': text_digest,
                 'provenance': provenance, 'training_examples': training_examples,
                 'converter_sha256': sha(__file__)}
+    if protocol_overrides:
+        identity['protocol_overrides'] = dict(protocol_overrides)
     output = Path(output)
     if output.exists():
         verify_shared(output, identity); return output
@@ -156,7 +162,7 @@ def build_shared(events, items, source, target, output, *, provenance, training_
     for name in ('source', 'target'):
         domain = source if name == 'source' else target
         counts[f'{name}_population_excluded_events'] = sum(len(rows) for u, rows in groups[domain].items() if u not in population_set)
-    rules = {'schema': SCHEMA, 'identity': identity, 'upstream_split_reference': UPSTREAM, 'paper_alignment_verified': False,
+    rules = {'schema': schema, 'identity': identity, 'upstream_split_reference': upstream, 'paper_alignment_verified': False,
              'comparison_scope': 'rerun both systems on this frozen common protocol; not a paper-table reproduction',
              'population': 'common users with >=5 valid events in EACH domain',
              'target_split': 'test=seq; val=seq[:-1]; train=seq[:-2]; final element is the label',
@@ -169,6 +175,8 @@ def build_shared(events, items, source, target, output, *, provenance, training_
              'candidate_policy': 'full target catalog, no sampled negatives',
              'encoder_history': 50, 'checkpoint_selection': 'HR@10 (equals Recall@10)',
              'test_policy': '17 preset validation-only fusion settings; protect four anchor metrics then maximize N@10; exact verification before immutable test'}
+    if protocol_overrides:
+        rules.update(protocol_overrides)
     write(stage / 'protocol.json', rules); write(stage / 'statistics.json', dict(counts))
     write(stage / 'shared_manifest.json', {'complete': True, 'identity': identity,
                                           'files': {n: sha(stage / n) for n in REQUIRED}})
