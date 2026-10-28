@@ -1,5 +1,13 @@
 """Detached device-side statistics shared by LLM training and its disposable benchmark."""
 import torch
+from cdr_framework.formal_recommendation import FormalBatch
+
+
+def training_batch_to_device(batch, device):
+    """Keep packing lengths on CPU; LLM sequence masks make their own device copy."""
+    return FormalBatch(batch.source_items.to(device), batch.source_lengths.cpu(),
+                       batch.target_items.to(device), batch.target_lengths.cpu(),
+                       batch.positive_items.to(device))
 
 
 class DeviceLossMeter:

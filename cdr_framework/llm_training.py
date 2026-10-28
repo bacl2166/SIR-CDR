@@ -9,10 +9,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from cdr_framework.formal_training import _artifact_fingerprints, _save_atomic, _sha256, _write_json, load_fixed_catalog
-from cdr_framework.llm_efficiency import DeviceLossMeter
+from cdr_framework.llm_efficiency import DeviceLossMeter, training_batch_to_device
 from cdr_framework.llm_model import LLMSIRCDR
 from cdr_framework.llm_reasoner import QwenLatentReasoner
-from cdr_framework.text_data import collate_text_rows
+from cdr_framework.text_data import collate_text_rows, collate_training_rows, load_training_rows
 from cdr_framework.text_graph import build_training_graphs
 from cdr_framework import text_training
 
@@ -116,7 +116,7 @@ def train(config, device, *, max_epochs_this_run=None):
     optimizer = torch.optim.AdamW(parameters, lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=.5,
         patience=config.scheduler_patience, min_lr=1e-6)
-    rows = text_training.load_rows(config, catalog, "train")
+    rows = load_training_rows(config, len(catalog.item_latents), catalog.target_item_ids)
     validation = text_training.load_rows(config, catalog, "validation")
     if not rows or not validation:
         raise ValueError("Train and validation sets must be nonempty")
@@ -144,14 +144,14 @@ def train(config, device, *, max_epochs_this_run=None):
         model.train()
         optimizer.zero_grad(set_to_none=True)
         loader = DataLoader(rows, batch_size=config.batch_size, shuffle=True,
-            generator=torch.Generator().manual_seed(config.seed + epoch), collate_fn=collate_text_rows)
+            generator=torch.Generator().manual_seed(config.seed + epoch), collate_fn=collate_training_rows)
         meter, group_examples, updates = DeviceLossMeter(), 0, 0
         if device.type == "cuda":
             torch.cuda.synchronize(device)
             torch.cuda.reset_peak_memory_stats(device)
         train_started = time.perf_counter()
-        for batch_number, (batch, _) in enumerate(loader, 1):
-            losses = model(batch.to(device))
+        for batch_number, batch in enumerate(loader, 1):
+            losses = model(training_batch_to_device(batch, device))
             if not torch.isfinite(losses["total"]):
                 raise RuntimeError("Non-finite LLM training loss")
             count = len(batch.positive_items)

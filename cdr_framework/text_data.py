@@ -4,6 +4,8 @@ import json
 import torch
 from cdr_framework.formal_recommendation import RecommendationRow, collate_recommendation_rows
 
+EMPTY_SEEN = frozenset()
+
 
 @dataclass(frozen=True)
 class TextRow:
@@ -14,7 +16,8 @@ class TextRow:
     seen_items: frozenset
 
 
-def load_text_rows(path: Path, max_length: int, num_items: int, target_ids: torch.Tensor):
+def load_text_rows(path: Path, max_length: int, num_items: int, target_ids: torch.Tensor,
+                   *, retain_seen: bool = True):
     targets = set(target_ids.tolist())
     rows = []
     with path.open(encoding="utf-8") as stream:
@@ -30,10 +33,28 @@ def load_text_rows(path: Path, max_length: int, num_items: int, target_ids: torc
                 raise ValueError(f"Invalid source ID at {path}:{number}")
             if any(i not in targets for i in target):
                 raise ValueError(f"Invalid target ID at {path}:{number}")
-            rows.append(TextRow(int(row["user_id"]), source[-max_length:], target[-max_length:], positive, frozenset(target)))
+            rows.append(TextRow(int(row["user_id"]), source[-max_length:], target[-max_length:],
+                                positive, frozenset(target) if retain_seen else EMPTY_SEEN))
     if not rows:
         raise ValueError(f"Empty split: {path}")
     return rows
+
+
+def load_training_rows(config, num_items, target_ids):
+    """Validate EVERY training prefix, omitting only unused full seen-history sets.
+
+    Evaluation must keep using load_text_rows' default retain_seen=True. No
+    sampling, truncation-policy changes, graph changes or held-out files here.
+    """
+    return load_text_rows(config.processed_dir / 'train.jsonl', config.max_sequence_length,
+                          num_items, target_ids, retain_seen=False)
+
+
+def collate_training_rows(rows):
+    """Same tensors and padding as evaluation collation, without building masks."""
+    return collate_recommendation_rows([
+        RecommendationRow(row.source_items, row.target_items, row.positive_target_item) for row in rows
+    ])
 
 
 def collate_text_rows(rows):
