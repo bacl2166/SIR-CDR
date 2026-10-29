@@ -80,7 +80,9 @@ class SportsRunnerTests(unittest.TestCase):
         r = self.runner(); p = r.plan(Path('/new'), Path('/old'), 'study')
         self.assertEqual(p['seeds'], [42,43,44])
         self.assertFalse(p['automatic_launch'])
-        self.assertIn('joint', p['filter'])
+        self.assertIn('independent full-domain', p['filter'])
+        self.assertIn('no common-subset item re-pruning', p['filter'])
+        self.assertEqual(r.SCHEMA, 'gencdsr-inspired-sc-v2')
         self.assertFalse(p['paper_alignment_verified'])
 
     def checkpoint_fixture(self, root):

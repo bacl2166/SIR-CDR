@@ -11,7 +11,7 @@ from pathlib import Path
 from . import gencdr_protocol as shared
 from .gencdr_inputs import PAIRS as RAW_PAIRS, raw_amazon
 
-SCHEMA = 'gencdsr-inspired-sc-v1'
+SCHEMA = 'gencdsr-inspired-sc-v2'
 PAIRS = ('sports_to_clothing', 'clothing_to_sports')
 DOMAINS = {pair: RAW_PAIRS[pair] for pair in PAIRS}
 UPSTREAM = {
@@ -21,7 +21,7 @@ UPSTREAM = {
     'split_function': 'data.py: chronological prefix expansion (inspiration only)',
     'author_sports_clothing_assets_available': False,
 }
-FILTER_SCOPE = 'OUR reconstruction choice: common population, item pruning then paired user pruning until stable'
+FILTER_SCOPE = 'OUR reconstruction choice: independent full-domain item3/user5 fixed points, then common users once; no common-subset item re-pruning'
 RULES = {
     'reconstruction_notes': FILTER_SCOPE,
     'comparison_scope': 'GenCDSR-inspired Sports/Clothing common protocol; unchanged SIR modules; not exact author assets',
@@ -37,7 +37,7 @@ def _snapshot(events, domains):
                             'events': sum(e.domain == d for e in events)} for d in sorted(domains)}}
 
 
-def _filter(events, source, target):
+def _ordered_events(events, source, target):
     domains = (source, target)
     ordered = sorted(events, key=lambda e: (e.user, e.domain, e.timestamp, e.item, e.key))
     seen = set()
@@ -48,30 +48,44 @@ def _filter(events, source, target):
         key = (e.user, e.domain, e.key)
         if key in seen: raise ValueError('Duplicate event key; repeats require distinct identities')
         seen.add(key)
-    users = {e.user for e in ordered if e.domain == source} & {e.user for e in ordered if e.domain == target}
-    current = [e for e in ordered if e.user in users]
+    return ordered
+
+
+def _common(events, source, target):
+    users = {e.user for e in events if e.domain == source} & {e.user for e in events if e.domain == target}
+    return [e for e in events if e.user in users]
+
+
+def _filter(events, source, target):
+    domains = (source, target)
+    ordered = _ordered_events(events, source, target)
+    current = ordered
     trace = {'policy': FILTER_SCOPE, 'user_min_events_each_domain': 5, 'item_min_events': 3,
-             'raw': _snapshot(ordered, domains), 'initial_common': _snapshot(current, domains), 'iterations': []}
+             'raw': _snapshot(ordered, domains),
+             'initial_common': _snapshot(_common(ordered, source, target), domains), 'iterations': []}
     while True:
         before = _snapshot(current, domains)
         item_counts = Counter((e.domain, e.item) for e in current)
         item_kept = [e for e in current if item_counts[e.domain, e.item] >= 3]
         counts = Counter((e.user, e.domain) for e in item_kept)
-        keep_users = {u for u in users if all(counts[u, d] >= 5 for d in domains)}
-        retained = [e for e in item_kept if e.user in keep_users]
+        # Each domain is filtered independently. A user's removal in one domain
+        # must not remove their support for an item in the other domain.
+        retained = [e for e in item_kept if counts[e.user, e.domain] >= 5]
         after = _snapshot(retained, domains)
         trace['iterations'].append({'before': before, 'after_item': _snapshot(item_kept, domains),
                                     'after': after, 'removed_item_events': len(current)-len(item_kept),
                                     'removed_user_events': len(item_kept)-len(retained)})
-        current = retained; users = keep_users
+        current = retained
         if before == after: break
-    trace['final'] = _snapshot(current, domains)
-    if not current: raise ValueError('Joint 5/3 common-user population is empty')
-    return current, trace
+    trace['filtered_domains'] = _snapshot(current, domains)
+    common = _common(current, source, target)
+    trace['final'] = _snapshot(common, domains)
+    if not common: raise ValueError('Full-domain 5/3 filtering has no common users')
+    return common, trace
 
 
 def build_pair(events, items, source, target, output, *, provenance):
-    """Filter within initial shared users, then retain SIR's causal paired rows."""
+    """Filter full domains before intersecting users; retain causal paired rows."""
     if (source, target) not in DOMAINS.values(): raise ValueError('Only Sports/Clothing directions are supported')
     filtered, trace = _filter(events, source, target)
     catalog = {(e.domain, e.item) for e in filtered}
@@ -82,7 +96,7 @@ def build_pair(events, items, source, target, output, *, provenance):
     enriched = {**provenance, 'kind': 'gencdsr-inspired-common-protocol', 'filter_audit': trace,
                 'upstream_reference': UPSTREAM, 'converter_sha256': shared.sha(__file__),
                 'paper_alignment_verified': False,
-                'reconstruction_scope': 'OUR common-population joint 5/3 fixed point; not exact author assets'}
+                'reconstruction_scope': 'OUR full-domain independent 5/3 fixed points then overlap; not exact author assets'}
     return shared.build_shared(filtered, texts, source, target, output, provenance=enriched,
                                schema=SCHEMA, upstream=UPSTREAM, protocol_overrides=RULES)
 
@@ -117,12 +131,12 @@ def _check_rows(root, name, expected):
         _equal(actual, wanted, name)
 
 
-def audit(processed):
+def audit(processed, *, raw_root=None):
     """Verify hashes AND reconstruct every mapping, split row and exclusion.
 
-    Raw discarded events are not duplicated in the artifact: raw-file hashes and
-    the declared filtering trace bind that provenance. The final fixed point and
-    all model-visible rows are independently recounted from frozen events.
+    raw_root replays full-domain filtering from hashed original files. Without
+    it, inspect the bound trace and recount final rows only: global item degrees
+    cannot be inferred from the smaller common-user subset.
     """
     root = Path(processed)
     shared.verify_shared(root)
@@ -144,8 +158,10 @@ def audit(processed):
     _equal(provenance.get('upstream_reference'), UPSTREAM, 'reference provenance')
     _equal(provenance.get('paper_alignment_verified'), False, 'provenance alignment')
     events = [shared.Event(**e) for e in _rows(root, 'events.jsonl')]
-    retained, final_trace = _filter(events, source, target)
-    _equal(events, retained, 'canonical filtered events')
+    _equal(events, _ordered_events(events, source, target), 'canonical filtered events')
+    user_counts = Counter((e.user, e.domain) for e in events)
+    if not events or any(user_counts[u, d] < 5 for u in {e.user for e in events} for d in (source, target)):
+        raise ValueError('Final common users require five events in each domain')
     digest = hashlib.sha256()
     groups = {source: defaultdict(list), target: defaultdict(list)}
     for e in events:
@@ -153,11 +169,11 @@ def audit(processed):
         groups[e.domain][e.user].append(e)
     _equal(digest.hexdigest(), identity['events_sha256'], 'events digest')
     trace = provenance['filter_audit']
-    _equal(trace['final'], final_trace['final'], 'final filter population')
+    _equal(trace['final'], _snapshot(events, (source, target)), 'final filter population')
     _equal(trace['policy'], FILTER_SCOPE, 'filter policy')
     _equal(trace['user_min_events_each_domain'], 5, 'user minimum')
     _equal(trace['item_min_events'], 3, 'item minimum')
-    previous = trace['initial_common']
+    previous = trace['raw']
     for step in trace['iterations']:
         _equal(step['before'], previous, 'filter trace continuity')
         if step['before']['events']-step['after_item']['events'] != step['removed_item_events']:
@@ -169,8 +185,20 @@ def audit(processed):
                 raise ValueError('Nonmonotonic filter trace')
         previous = step['after']
     if not trace['iterations']: raise ValueError('Missing fixed point evidence')
-    _equal(previous, trace['final'], 'filter trace final')
+    _equal(previous, trace['filtered_domains'], 'filter trace full-domain final')
     _equal(trace['iterations'][-1]['before'], previous, 'stable terminal pass')
+    for field in ('users', 'events'):
+        if not 0 < trace['final'][field] <= trace['initial_common'][field] <= trace['raw'][field]:
+            raise ValueError('Invalid common-user population trace')
+        if trace['final'][field] > trace['filtered_domains'][field]:
+            raise ValueError('Common subset exceeds filtered domain population')
+    if raw_root is not None:
+        raw_events, _, raw_provenance = raw_amazon(Path(raw_root), source, target)
+        for key in ('raw_files', 'reader_sha256', 'raw_audit'):
+            _equal(raw_provenance[key], provenance[key], 'raw replay '+key)
+        replayed, replay_trace = _filter(raw_events, source, target)
+        _equal(trace, replay_trace, 'raw filter replay trace')
+        _equal(events, replayed, 'raw filter replay events')
     users = sorted(groups[source]); catalog = sorted({(e.domain, e.item) for e in events})
     number = {key: n for n, key in enumerate(catalog, 1)}
     mapping = {'padding_item_id': 0, 'source_domain': source, 'target_domain': target,
@@ -220,7 +248,8 @@ def audit(processed):
     counts['source_population_excluded_events'] = counts['target_population_excluded_events'] = 0
     _equal(_json(root, 'statistics.json'), dict(counts), 'statistics')
     return {'complete': True, 'schema': SCHEMA, 'processed': str(root), **counts,
-            'events': len(events), 'paper_alignment_verified': False}
+            'events': len(events), 'paper_alignment_verified': False,
+            'raw_filter_replayed': raw_root is not None}
 
 
 def audit_pair_roots(forward, reverse):

@@ -18,7 +18,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
-SCHEMA = 'gencdsr-inspired-sc-v1'
+SCHEMA = 'gencdsr-inspired-sc-v2'
 PAIRS = ('sports_to_clothing', 'clothing_to_sports')
 SEEDS = (42, 43, 44)
 LLM_REVISION = 'c1899de289a04d12100db370d81485cdf75e47ca'
@@ -130,7 +130,7 @@ def plan(root, data_root, study):
     return {'schema':SCHEMA, 'root':str(Path(root).resolve()), 'data_root':str(Path(data_root).resolve()),
             'study':study, 'pairs':list(PAIRS), 'seeds':list(SEEDS), 'pilot_seed':42,
             'automatic_launch':False, 'paper_alignment_verified':False,
-            'filter':'initial common users, joint fixed-point item>=3/user-both-domains>=5',
+            'filter':'independent full-domain item>=3/user>=5 fixed points, then common users; no common-subset item re-pruning',
             'ranking':'full target catalog; full-seen masking; predeclared hybrid500/0.5/none',
             'selection_metric':'NDCG@10', 'llm_revision':LLM_REVISION,
             'embedding_revision':EMBEDDING_REVISION, 'actions':list(ACTIONS)}
@@ -392,7 +392,7 @@ def workflow(root,data_root,study,pair,seed,action,gpu):
                     source_identity(); return str(convert(data_root,pair,output_root=root))
                 if action == 'audit':
                     from cdr_framework.datasets.gencdsr_protocol import audit
-                    return audit(p['processed'])
+                    return audit(p['processed'], raw_root=data_root)
                 if action == 'seal': return seal(root,pair)
                 if (p['assets']/'ready.json').exists(): raise RuntimeError('Assets already sealed')
                 with gpu_session(gpu,p['job'],sticky=False) as (device,_):
@@ -437,7 +437,7 @@ def main():
     parser.add_argument('--action', choices=ACTIONS, required=True)
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--data-root', type=Path, default=Path('/Data/lihb/SIR-CDR'))
-    parser.add_argument('--study-id', default='sports-clothing-gencdsr-v1')
+    parser.add_argument('--study-id', default='sports-clothing-gencdsr-v2')
     parser.add_argument('--pair', choices=PAIRS)
     parser.add_argument('--seed', type=int, choices=SEEDS, default=42)
     parser.add_argument('--gpu', help='Explicit full physical GPU UUID; required for every GPU stage')

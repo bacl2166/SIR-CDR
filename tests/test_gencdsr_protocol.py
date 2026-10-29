@@ -49,23 +49,38 @@ class GenCDSRProtocolTests(unittest.TestCase):
         receipt['files'][name] = shared.sha(path)
         shared.write(root / 'shared_manifest.json', receipt)
 
-    def test_joint_fixedpoint_cascades_after_common_user_intersection_and_keeps_repeats(self):
+    def test_global_item_support_from_non_common_users_is_not_discarded_before_filtering(self):
+        events, _, source, target = self.fixture()
+        filtered, trace = protocol._filter(events, source, target)
+        self.assertEqual({e.user for e in filtered}, {'a', 'b', 'c', 'x', 'y'})
+        self.assertEqual(sum(e.domain == source and e.item == 'rare' for e in filtered), 2)
+        self.assertNotIn('outsider', {e.user for e in filtered})
+
+    def test_domain_user_pruning_does_not_delete_the_users_other_domain_support(self):
+        events, _, source, target = self.fixture()
+        events = [e for e in events if e.user != 'outsider']
+        filtered, trace = protocol._filter(events, source, target)
+        self.assertEqual({e.user for e in filtered}, {'a', 'b', 'c', 'y'})
+        self.assertEqual(sum(e.domain == target and e.item == 'bridge' for e in filtered), 2)
+
+    def test_full_domain_fixedpoint_precedes_intersection_and_keeps_repeats(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.build(Path(tmp)/'new')
-            self.assertEqual(self.read(root, 'mappings.json')['id_to_user'], ['a', 'b', 'c'])
+            self.assertEqual(self.read(root, 'mappings.json')['id_to_user'], ['a', 'b', 'c', 'x', 'y'])
             events = self.read(root, 'events.jsonl')
-            self.assertEqual(len(events), 36)
-            self.assertEqual({e['item'] for e in events}, {'core'})
+            self.assertEqual(len(events), 56)
+            self.assertEqual({e['item'] for e in events}, {'core', 'rare', 'bridge'})
             provenance = self.read(root, 'protocol.json')['identity']['provenance']
             trace = provenance['filter_audit']
             self.assertEqual(trace['initial_common']['users'], 5)
-            self.assertGreaterEqual(len(trace['iterations']), 3)
-            self.assertTrue(any(r['removed_item_events'] for r in trace['iterations']))
-            self.assertEqual(trace['final']['users'], 3)
+            self.assertEqual(len(trace['iterations']), 1)
+            self.assertEqual(trace['filtered_domains']['users'], 6)
+            self.assertEqual(trace['final']['users'], 5)
             self.assertEqual(provenance['converter_sha256'], shared.sha(protocol.__file__))
             report = protocol.audit(root)
             self.assertTrue(report['complete'])
-            self.assertEqual(report['users'], 3)
+            self.assertEqual(report['users'], 5)
+            self.assertFalse(report['raw_filter_replayed'])
 
     def test_causal_splits_and_reverse_symmetry(self):
         events, items, source, target = self.fixture()
@@ -74,7 +89,7 @@ class GenCDSRProtocolTests(unittest.TestCase):
             reverse = protocol.build_pair(reversed(events), items, target, source, Path(tmp)/'r', provenance={'kind': 'synthetic'})
             self.assertTrue(protocol.audit_pair_roots(forward, reverse)['complete'])
             rows = self.read(forward, 'train.jsonl')
-            self.assertEqual(len(rows), 9)
+            self.assertEqual(len(rows), 13)
             self.assertEqual({r['target_position'] for r in rows}, {1, 2, 3})
             for row in rows:
                 self.assertLess(row['maximum_source_timestamp'], row['timestamp'])
@@ -122,6 +137,11 @@ class GenCDSRProtocolTests(unittest.TestCase):
             result = protocol.convert(raw, protocol.PAIRS[0], output_root=destination)
             self.assertEqual(result, destination/'data/processed'/protocol.SCHEMA/protocol.PAIRS[0])
             self.assertTrue(protocol.audit(result)['complete'])
+            self.assertTrue(protocol.audit(result, raw_root=raw)['raw_filter_replayed'])
+            with gzip.open(folder/f'reviews_{source}_5.json.gz', 'at', encoding='utf-8') as stream:
+                stream.write(json.dumps({'reviewerID': 'extra', 'asin': 'extra', 'unixReviewTime': 1})+'\n')
+            with self.assertRaisesRegex(ValueError, 'raw replay'):
+                protocol.audit(result, raw_root=raw)
             self.assertFalse((raw/'data/processed').exists())
 
     def test_shared_overrides_are_documentation_only_and_bound_to_identity(self):
@@ -150,7 +170,7 @@ class GenCDSRProtocolTests(unittest.TestCase):
             self.assertEqual(len(exclusions), 5)
             self.assertEqual({r['user'] for r in exclusions}, {'a'})
             self.assertEqual({r['target_event_key'] for r in exclusions if r['split'] == 'test'}, {'5'})
-            self.assertEqual(self.read(root, 'mappings.json')['id_to_user'], ['a', 'b', 'c'])
+            self.assertEqual(self.read(root, 'mappings.json')['id_to_user'], ['a', 'b', 'c', 'x', 'y'])
             self.assertTrue(protocol.audit(root)['complete'])
 
     def test_holdout_only_catalog_and_stable_ties_with_distinct_source_items(self):
