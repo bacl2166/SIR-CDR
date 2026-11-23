@@ -39,3 +39,21 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 ## 元数据网络恢复
 
 新增入口的元数据下载使用 60 秒连接超时和 300 秒读取超时，最多尝试 6 次。中断时保存 .part 文件，下次按实际字节数请求续传。服务器忽略 Range 时重新下载该文件，Content-Range 不匹配时停止接受该响应，gzip 完整性通过后才发布正式文件。日志显示每次重试、续传位置及每约 16 MiB 的字节进度。重试耗尽后保留尚存的部分文件，重新执行相同入口继续恢复。
+
+## 对齐成功后的 GPU 资产生成
+
+prepare_amazon_assets.py 读取 Phones 的真实 embedding_model.json、tokenizer_execution.json 和已封存的资产链，将新目录的嵌入模型固定到原 revision，并复用原 embedding、tokenize、seal 函数。新数据对仅在进程内临时注册，原始六方向代码与文件身份继续沿用现有版本。嵌入采用 768 维、归一化、512 token 截断、batch size 2；SID 参数必须与 Phones 实际训练记录一致。
+
+```bash
+export HF_HOME=/Data/lihb/hf_cache HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+/Data/lihb/envs/sir-cdr/bin/python -u experiments/prepare_amazon_assets.py \
+  --root /Data/lihb/SIR-CDR --max-workers 2 \
+  --alignment /Data/lihb/SIR-CDR/artifacts/diagnostics/amazon-expansion-phones-alignment-v1/alignment-20261123T092552327241Z.json
+```
+
+自动筛选无计算进程、利用率至多 5%、至少空闲 24 GiB 的 GPU。每个方向按原协议路径单独生成 embedding 和 tokenizer；两个阶段在不同子进程运行，阶段切换时释放模型。最多并行两个方向，并沿用原调度器的主机内存和 CPU 压力检查。已完成目录通过 verify_ready 后跳过；未完成任务沿用自己的 asset_gpu.json 绑卡以便恢复。没有满足条件的卡时输出 WAIT_GPU。重新运行会刷新空闲卡列表，当前一轮的可用卡列表在启动时确定。
+
+单方向完成时打印 ASSETS_READY，四方向全部封存后打印 AMAZON_ASSETS_COMPLETE。各方向日志在 /Data/lihb/SIR-CDR/logs/amazon-expansion-assets-v1/，控制状态在 artifacts/diagnostics/amazon-expansion-assets-v1/。本地验证覆盖参数绑定、原函数调用和恢复检查；真实 8B 编码及 SID 质量门槛需要服务器执行验证。
+
+每个方向绑定本次 ALIGNMENT_OK 报告中的数据 manifest 哈希，并核对源/目标领域角色。复用已封存资产时会重新核对实际模型 revision 及 tokenizer 训练参数。两个子进程每次启动前重新检查卡占用。GPU 候选池最多传入六张卡以兼容原调度器，并优先保留待续跑任务的原绑卡。
