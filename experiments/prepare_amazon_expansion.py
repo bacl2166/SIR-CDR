@@ -11,11 +11,12 @@ if str(ROOT) not in sys.path:
 
 from cdr_framework.datasets import gencdr_inputs, gencdr_protocol
 from cdr_framework.datasets.amazon2014 import (
-    AMAZON_2014_BASE_URL, _download_file, _validate_gzip, category_files,
+    AMAZON_2014_BASE_URL, _validate_gzip, category_files,
 )
 from cdr_framework.datasets.gencdr_inputs import raw_amazon
 from cdr_framework.datasets.gencdr_protocol import SCHEMA, build_shared, sha, verify_shared, write
 from experiments.audit_cross_domain_candidates import PAIRS, direction_statistics, read_domain
+from experiments.amazon_metadata_download import download_metadata
 
 
 def read(path):
@@ -54,7 +55,7 @@ def ensure_raw(root, audit, download):
         for path in (files.reviews, files.metadata):
             if not path.exists() and download:
                 print(f"DOWNLOAD {path.name}", flush=True)
-                _download_file(f"{AMAZON_2014_BASE_URL}/{path.name}", path)
+                download_metadata(f"{AMAZON_2014_BASE_URL}/{path.name}", path)
             if not path.is_file():
                 raise FileNotFoundError(f"Missing {path}; use --download-metadata")
             _validate_gzip(path)
