@@ -57,3 +57,21 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 单方向完成时打印 ASSETS_READY，四方向全部封存后打印 AMAZON_ASSETS_COMPLETE。各方向日志在 /Data/lihb/SIR-CDR/logs/amazon-expansion-assets-v1/，控制状态在 artifacts/diagnostics/amazon-expansion-assets-v1/。本地验证覆盖参数绑定、原函数调用和恢复检查；真实 8B 编码及 SID 质量门槛需要服务器执行验证。
 
 每个方向绑定本次 ALIGNMENT_OK 报告中的数据 manifest 哈希，并核对源/目标领域角色。复用已封存资产时会重新核对实际模型 revision 及 tokenizer 训练参数。两个子进程每次启动前重新检查卡占用。GPU 候选池最多传入六张卡以兼容原调度器，并优先保留待续跑任务的原绑卡。
+
+## 阶段切换遇到占卡后的续跑
+
+2026-11-24 的服务器输出显示，Food→Kitchen 已完成 15,265/15,265 批嵌入，并写出最终 manifest，但原调度器在切换到 tokenize 前发现 4 号卡被占用而退出。此次新增 continue_amazon_assets.py 作为续跑入口，保留 prepare_amazon_assets.py 及原模型、数据和执行配方的文件身份。
+
+```bash
+export HF_HOME=/Data/lihb/hf_cache HF_HUB_OFFLINE=1
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+/Data/lihb/envs/sir-cdr/bin/python -u experiments/continue_amazon_assets.py \
+  --root /Data/lihb/SIR-CDR --max-workers 2 --poll-seconds 60 \
+  --alignment /Data/lihb/SIR-CDR/artifacts/diagnostics/amazon-expansion-phones-alignment-v1/alignment-20261123T092552327241Z.json
+```
+
+入口校验完整嵌入的输入、数据及代码身份、模型 revision/config、批次数、矩阵形状、float32 类型、有限值、归一化、零填充行、物品索引和全部缓存分块后，直接进入 SID 训练，不再调用嵌入模型。校验每完成 1,000 个分块显示 VERIFY_EMBEDDING。向量文件 SHA-256 随任务保存，启动 SID 前和封存前复核，并核对 tokenizer 执行收据所记录的输入哈希。缺少最终 manifest 的嵌入继续使用原断点恢复逻辑。已封存方向通过原 verify_ready 校验后跳过。
+
+每次派发重新查询全部 GPU；要求无计算进程、利用率不超过 5%、空闲显存至少 24 GiB，最多并行两个阶段，并检查 CPU 与主机内存。阶段间允许选择不同物理卡；资源不足时每 60 秒重新查询，启动前发现卡已被占用则重新排队。实际子进程失败时保留错误、停止新增任务，并等待正在运行的其他任务结束后退出。
+
+原 asset_gpu.json 和 expansion_recipe.json 保留原内容。每次实际阶段执行在各方向控制目录 stage_executions/ 保存 GPU UUID、时间、原绑卡记录哈希、续跑脚本哈希和执行结果。新的阶段状态在 artifacts/diagnostics/amazon-expansion-assets-v1/continuation_status/；旧 status/ 中的历史失败保留。方向日志继续追加到 logs/amazon-expansion-assets-v1/。此入口需要后台运行时可用 nohup 启动，无需额外 shell 重试循环。
