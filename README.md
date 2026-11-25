@@ -349,3 +349,13 @@ For new, isolated leave-one-out assets and Recall@10 checkpoint selection, see
 Run `python experiments/run_gencdr_shared.py --action convert`, then `--action prepare`,
 then `--action run`. This is a common-protocol reproduction, not a verified copy
 of the author's unavailable final splits. Existing experiment entry points retain their original assets.
+
+## GenCDR model on existing assets
+
+`experiments/run_gencdr_baseline.py` waits for all verified results of the current
+SIR Amazon batch, then trains an independent GenCDR reconstruction on the same
+frozen examples and existing item embeddings. It never invokes data preparation.
+The upstream repository does not publish the recommendation decoder; missing
+components are reconstructed and every output is labelled accordingly. This is
+not a claim of reproducing the original paper's Qwen2.5-7B results.
+See the [implementation boundaries and deployment guide](docs/gencdr_baseline_existing_assets_zh.md).
