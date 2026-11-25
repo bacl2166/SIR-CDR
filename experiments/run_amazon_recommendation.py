@@ -35,6 +35,8 @@ from experiments.tune_llm_parameters import parameter_settings
 PAIRS = ("food_to_kitchen", "kitchen_to_food", "beauty_to_electronics", "electronics_to_beauty")
 SEEDS = (42, 43, 44)
 METRICS = tuple(f"{m}@{k}" for k in (5, 10, 20) for m in ("R", "N"))
+MINIMUM_FREE_DISK_GIB = 24
+DEFAULT_BATCH_ID = "amazon-expansion-dual-ndcg-disk24-v1"
 
 
 def read(path):
@@ -88,6 +90,7 @@ def request(root, batch, alignment):
             "source": source(), "selection_policy": policy.SELECTION_POLICY,
             "checkpoint_metric": policy.MEAN_METRIC, "training_exact_tie": "earlier epoch",
             "maximum_workers": 2, "job_ram_bytes": 24 * 2**30,
+            "minimum_free_disk_gib": MINIMUM_FREE_DISK_GIB,
             "minimum_free_mib": 12288, "maximum_gpu_utilization": 5,
             "test_released_only_after_all_validation": True, "paper_alignment_verified": False}
 
@@ -161,6 +164,18 @@ def wait_for_workers(root, batch, poll):
         if not workers:
             return
         print("WAIT_EXISTING_WORKERS " + ",".join(str(p["pid"]) for p in workers), flush=True)
+        time.sleep(poll)
+
+
+def wait_for_disk(root, poll):
+    """Resource-only gate: report actual capacity and wait without changing assets."""
+    while True:
+        free_bytes = shutil.disk_usage(root).free
+        free_gib = free_bytes / 2**30
+        print(f"DISK_CHECK free_gib={free_gib:.3f} required_gib={MINIMUM_FREE_DISK_GIB}", flush=True)
+        if free_bytes >= MINIMUM_FREE_DISK_GIB * 2**30:
+            return free_gib
+        print(f"WAIT_DISK recheck={poll}s", flush=True)
         time.sleep(poll)
 
 
@@ -391,8 +406,7 @@ def run(args):
             cfg = config_for(root, batch, job)
             bind(job_folder(root, batch, job) / "runtime.json", llm_training.config_payload(cfg))
             llm.check_cached_model(cfg)
-        if shutil.disk_usage(root).free < 32 * 2**30:
-            raise RuntimeError("At least 32 GiB free disk required before recommendation jobs")
+        wait_for_disk(root, args.poll_seconds)
 
         def launch(job, card, phase):
             cfg = config_for(root, batch, job)
@@ -462,7 +476,7 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/Data/lihb/SIR-CDR"))
-    parser.add_argument("--batch-id", default="amazon-expansion-dual-ndcg-v1")
+    parser.add_argument("--batch-id", default=DEFAULT_BATCH_ID)
     parser.add_argument("--alignment", type=Path)
     parser.add_argument("--poll-seconds", type=float, default=60)
     parser.add_argument("--action", choices=("run", "status"), default="run")

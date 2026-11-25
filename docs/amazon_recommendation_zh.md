@@ -13,7 +13,7 @@ Food→Kitchen、Kitchen→Food、Beauty→Electronics、Electronics→Beauty，
 ## 执行顺序
 
 1. 持久保存本轮 request；等待所有资产封存，保存实际资产/配置声明。
-2. 检查本地固定 revision 的 Qwen 缓存和至少 32 GiB 空闲磁盘。
+2. 检查本地固定 revision 的 Qwen 缓存；启动时要求至少 24 GiB 空闲磁盘，不足时每 60 秒等待重查。
 3. 每方向运行一次正式参数的 smoke，检查梯度、排序及显存峰值，不执行 optimizer.step。
 4. 自动运行 12 次训练及各自验证配置选择和精确复核。已完成且身份匹配的训练或验证被复用；部分训练由原 last_checkpoint.pt 恢复。
 5. 收齐 12 份验证绑定，固定 checkpoint、runtime、ready、snapshot、cache、search、verification、smoke 和 GPU affinity；写入 validation_freeze.json 后才能评估测试集。
@@ -30,10 +30,10 @@ Food→Kitchen、Kitchen→Food、Beauty→Electronics、Electronics→Beauty，
 
 若仅控制器退出而其工作进程仍存活，重启入口会先等待本人同批次的旧工作进程完成，再恢复派发，避免新旧控制器合计突破两任务并发上限。资产的最后一个 ready 文件出现后，还会等待原资产控制器释放写入锁，再验证全部封存记录。
 
-在独立服务器代码目录检出固定发布提交后，可立即 nohup 启动，即使最后一方向资产还没完成。默认 batch-id 是 amazon-expansion-dual-ndcg-v1。所有新记录位于：
+在独立服务器代码目录检出固定发布提交后，可立即 nohup 启动，即使最后一方向资产还没完成。默认 batch-id 是 amazon-expansion-dual-ndcg-disk24-v1。原 amazon-expansion-dual-ndcg-v1 因 32 GiB 门槛阻塞且尚未训练，保留其声明和日志，使用新批次记录门槛调整与新的调度器源码身份；数据资产、模型与评估适配器均继续复用原实现。这是用户授权的资源策略调整，24 GiB 仍是预留值，不是实测最低训练需求。所有新记录位于：
 
 ```text
-/Data/lihb/SIR-CDR/artifacts/amazon_recommendation/amazon-expansion-dual-ndcg-v1/
+/Data/lihb/SIR-CDR/artifacts/amazon_recommendation/amazon-expansion-dual-ndcg-disk24-v1/
   request.json
   declaration.json
   jobs/<pair>/seed<seed>/runtime.json
@@ -53,6 +53,7 @@ export HF_HOME=/Data/lihb/hf_cache HF_HUB_OFFLINE=1
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 /Data/lihb/envs/sir-cdr/bin/python -u experiments/run_amazon_recommendation.py \
   --root /Data/lihb/SIR-CDR \
+  --batch-id amazon-expansion-dual-ndcg-disk24-v1 \
   --alignment /Data/lihb/SIR-CDR/artifacts/diagnostics/amazon-expansion-phones-alignment-v1/alignment-20261123T092552327241Z.json
 ```
 
@@ -60,7 +61,7 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 
 ```bash
 CUDA_VISIBLE_DEVICES="" /Data/lihb/envs/sir-cdr/bin/python experiments/run_amazon_recommendation.py \
-  --root /Data/lihb/SIR-CDR --action status
+  --root /Data/lihb/SIR-CDR --batch-id amazon-expansion-dual-ndcg-disk24-v1 --action status
 ```
 
 本地 CPU 小型端到端检查验证策略与不可覆盖测试结果；真实 L20 的正式规模 smoke、显存、耗时和推荐效果需在服务器执行确认。进程通过 nohup 后台运行，断开 SSH 不会因终端关闭而结束；服务器停机或进程退出后需要重新执行同一批次入口恢复。

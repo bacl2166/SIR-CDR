@@ -16,6 +16,34 @@ class AmazonRecommendationRunnerTests(unittest.TestCase):
         return {"index": index, "uuid": f"GPU-{index}", "memory_free_mib": 45000,
                 "utilization": 100 if busy else 0, "pids": [1] if busy else []}
 
+    def test_disk_gate_accepts_reported_space_without_falsifying_capacity(self):
+        with patch.object(runner.shutil, "disk_usage", return_value=SimpleNamespace(free=int(29.242 * 2**30))), \
+                patch.object(runner.time, "sleep") as sleep:
+            free = runner.wait_for_disk(Path("/tmp"), 60)
+            self.assertAlmostEqual(free, 29.242, places=3)
+            sleep.assert_not_called()
+        self.assertEqual(runner.MINIMUM_FREE_DISK_GIB, 24)
+
+    def test_disk_gate_waits_below_24_and_accepts_exact_boundary(self):
+        with patch.object(runner.shutil, "disk_usage", side_effect=[
+                SimpleNamespace(free=24 * 2**30 - 1), SimpleNamespace(free=24 * 2**30)]), \
+                patch.object(runner.time, "sleep") as sleep:
+            self.assertEqual(runner.wait_for_disk(Path("/tmp"), 60), 24)
+            sleep.assert_called_once_with(60)
+
+    def test_disk_policy_has_a_separate_batch_and_preserves_other_training_settings(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(runner, "source", return_value={"commit": "new"}):
+            root = Path(d)
+            alignment = root / "alignment.json"
+            alignment.write_text("{}")
+            record = runner.request(root, runner.DEFAULT_BATCH_ID, alignment)
+            self.assertEqual(record["minimum_free_disk_gib"], 24)
+            self.assertNotEqual(runner.DEFAULT_BATCH_ID, "amazon-expansion-dual-ndcg-v1")
+            cfg = runner.config_for(root, runner.DEFAULT_BATCH_ID, runner.jobs()[0])
+            self.assertEqual(cfg.learning_rate, .0001)
+            self.assertEqual(cfg.selection_metric, runner.policy.MEAN_METRIC)
+            self.assertEqual(len(runner.jobs()), 12)
+
     def test_plan_has_twelve_jobs_and_dual_objective_without_changing_phones_recipe(self):
         jobs = runner.jobs()
         self.assertEqual(len(jobs), 12)
