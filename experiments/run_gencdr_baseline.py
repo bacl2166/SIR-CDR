@@ -297,8 +297,8 @@ def main():
     args.root = args.root.resolve()
     validate_batch_id(args.batch_id)
     validate_batch_id(args.source_batch)
-    if not 1 <= args.max_workers <= 6 or args.poll_seconds < 5:
-        parser.error('max-workers 1..6 and poll-seconds >=5 required')
+    if not 1 <= args.max_workers <= 8 or args.poll_seconds < 5:
+        parser.error('max-workers 1..8 and poll-seconds >=5 required')
     os.environ.update(HF_HUB_OFFLINE='1', TOKENIZERS_PARALLELISM='false',
         OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1', CUBLAS_WORKSPACE_CONFIG=':4096:8', NVIDIA_TF32_OVERRIDE='0')
     out = folder(args.root, args.batch_id)

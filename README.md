@@ -359,3 +359,6 @@ The upstream repository does not publish the recommendation decoder; missing
 components are reconstructed and every output is labelled accordingly. This is
 not a claim of reproducing the original paper's Qwen2.5-7B results.
 See the [implementation boundaries and deployment guide](docs/gencdr_baseline_existing_assets_zh.md).
+
+For automatic idle-card use across GPUs 0..7 while retaining active Amazon
+workers, see [eight-GPU live expansion](docs/amazon_eight_gpu_zh.md).
